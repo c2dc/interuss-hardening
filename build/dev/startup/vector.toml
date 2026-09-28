@@ -1,0 +1,214 @@
+# Vector: tail every local container's logs via the read-only Docker socket and
+# ship them, gzip-compressed, to the MinIO WORM bucket. The local Docker
+# json-file logs are untouched, so `docker logs` / `make collect-local-logs`
+# keep working.
+
+data_dir = "/var/lib/vector"
+
+[api]
+enabled = true
+address = "0.0.0.0:8686"
+
+# ---------------------------------------------------------------------------
+# Source: all containers the socket can see (excluding this one).
+# ---------------------------------------------------------------------------
+[sources.docker]
+type = "docker_logs"
+docker_host = "unix:///var/run/docker.sock"
+exclude_containers = ["local_infra_secrets-vector"]
+
+# ---------------------------------------------------------------------------
+# Enrich + flatten the fields used in the object key.
+# ---------------------------------------------------------------------------
+[transforms.enrich]
+type = "remap"
+inputs = ["docker"]
+source = '''
+.ingested_at = now()
+# string() errors on null/absent (unlike to_string), so ?? gives the fallback for
+# containers that were not started by docker compose.
+.project = string(.label."com.docker.compose.project") ?? "adhoc"
+.cname = string(.container_name) ?? "unknown"
+'''
+
+# ---------------------------------------------------------------------------
+# Sink: MinIO (S3 API). The bucket's default COMPLIANCE retention makes every
+# PutObject WORM automatically — Vector sends no lock headers itself.
+# ---------------------------------------------------------------------------
+[sinks.worm]
+type = "aws_s3"
+inputs = ["enrich"]
+bucket = "logs"
+endpoint = "https://minio.localutm:9000"
+region = "us-east-1"
+force_path_style = true
+compression = "gzip"
+key_prefix = "date=%F/project={{ project }}/container={{ cname }}/"
+filename_time_format = "%Y-%m-%dT%H-%M-%S"
+filename_append_uuid = true
+
+[sinks.worm.encoding]
+codec = "json"
+
+[sinks.worm.auth]
+access_key_id = "${AWS_ACCESS_KEY_ID}"
+secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+
+[sinks.worm.tls]
+ca_file = "/secrets/minio/ca.crt"
+
+# No HeadBucket probe, so the write-only (PutObject-only) account is sufficient.
+[sinks.worm.healthcheck]
+enabled = false
+
+[sinks.worm.batch]
+max_bytes = 10000000
+timeout_secs = 60
+
+# Persist to disk and back-pressure rather than drop if MinIO is briefly down.
+[sinks.worm.buffer]
+type = "disk"
+max_size = 268435488
+when_full = "block"
+
+# ===========================================================================
+# Structured ASTM interaction records.
+#
+# The sources above capture container stdout/stderr. They do NOT capture
+# mock_uss's `interaction_logging` output: full ASTM request/response pairs
+# (method, URL, headers, bodies, status, timing) written as one JSON file per
+# interaction into bind-mounted host directories that are wiped on every `up`.
+# Those are the most audit-relevant artifacts in the ecosystem, so they are
+# shipped here too — inheriting the bucket's Object Lock, SSE-S3 and the
+# log-chainer's hash chain, which covers the whole bucket.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Source: the six producing mock USS instances. Every interaction-log directory
+# ends in `_interaction_logs`; `output/tracer` does not, so this glob selects
+# exactly the interaction records and leaves the tracer's separate corpus alone.
+# The directory is mounted read-only at /mock-interactions (docker-compose.secrets.yaml).
+# ---------------------------------------------------------------------------
+[sources.interactions]
+type = "file"
+include = ["/mock-interactions/*_interaction_logs/*.json"]
+read_from = "beginning"
+# Files are written once and never appended; keep them tracked long enough to be
+# picked up even if MinIO is briefly unavailable.
+ignore_older_secs = 86400
+
+# ---------------------------------------------------------------------------
+# Attribute each record to its producer, and redact bearer tokens.
+#
+# WORM retention is COMPLIANCE mode: whatever is written here cannot be deleted
+# for three days, so credentials must not go in verbatim. This mirrors the rule
+# uss_qualifier already applies to its own reports
+# (monitoring/uss_qualifier/reports/report.py, redact_access_tokens): keep the
+# JWT header and payload so sub/scope/exp/cnf stay auditable, replace only the
+# signature so the token cannot be replayed.
+#
+# This is a targeted rule over the two header maps an Interaction record has, not
+# a recursive walk of arbitrary fields.
+# ---------------------------------------------------------------------------
+[transforms.interactions_enrich]
+type = "remap"
+inputs = ["interactions"]
+source = '''
+.ingested_at = now()
+
+# Producer identity comes from the directory name, e.g. scdsc_interaction_logs.
+producer = "unknown"
+matched = parse_regex(string!(.file), r'/mock-interactions/(?P<dir>[^/]+)/') ?? null
+if matched != null {
+  producer = string(matched.dir) ?? "unknown"
+}
+.producer = producer
+
+# The file holds one JSON object: the Interaction record. Parse it so the
+# redaction below can address fields; keep the raw line if it ever fails to parse
+# rather than dropping an audit record.
+parsed = parse_json(string!(.message)) ?? null
+if parsed != null {
+  .interaction = parsed
+  del(.message)
+
+  # VRL has no user-defined functions, so the same redaction is written out once
+  # per header map (request, response) rather than factored into a helper.
+  req = get(.interaction, ["query", "request", "headers"]) ?? null
+  if is_object(req) {
+    out = {}
+    for_each(object!(req)) -> |k, v| {
+      val = to_string(v) ?? ""
+      if downcase(k) == "authorization" && starts_with(downcase(val), "bearer ") {
+        parts = split(slice!(val, 7), ".")
+        if length(parts) == 3 {
+          val = "Bearer " + to_string(parts[0]) + "." + to_string(parts[1]) + ".REDACTED"
+        } else {
+          val = "Bearer REDACTED"
+        }
+      }
+      out = set!(out, [k], val)
+    }
+    . = set!(., ["interaction", "query", "request", "headers"], out)
+  }
+
+  resp = get(.interaction, ["query", "response", "headers"]) ?? null
+  if is_object(resp) {
+    out = {}
+    for_each(object!(resp)) -> |k, v| {
+      val = to_string(v) ?? ""
+      if downcase(k) == "authorization" && starts_with(downcase(val), "bearer ") {
+        parts = split(slice!(val, 7), ".")
+        if length(parts) == 3 {
+          val = "Bearer " + to_string(parts[0]) + "." + to_string(parts[1]) + ".REDACTED"
+        } else {
+          val = "Bearer REDACTED"
+        }
+      }
+      out = set!(out, [k], val)
+    }
+    . = set!(., ["interaction", "query", "response", "headers"], out)
+  }
+}
+'''
+
+# ---------------------------------------------------------------------------
+# Sink: same WORM bucket, distinct prefix so interaction records are separable
+# from container stdout at a glance. Vector's credential is s3:PutObject on
+# logs/* (bucket-wide), so no MinIO policy change is required.
+# ---------------------------------------------------------------------------
+[sinks.interactions_worm]
+type = "aws_s3"
+inputs = ["interactions_enrich"]
+bucket = "logs"
+endpoint = "https://minio.localutm:9000"
+region = "us-east-1"
+force_path_style = true
+compression = "gzip"
+key_prefix = "interactions/date=%F/producer={{ producer }}/"
+filename_time_format = "%Y-%m-%dT%H-%M-%S"
+filename_append_uuid = true
+
+[sinks.interactions_worm.encoding]
+codec = "json"
+
+[sinks.interactions_worm.auth]
+access_key_id = "${AWS_ACCESS_KEY_ID}"
+secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+
+[sinks.interactions_worm.tls]
+ca_file = "/secrets/minio/ca.crt"
+
+[sinks.interactions_worm.healthcheck]
+enabled = false
+
+# Smaller batch window than the stdout sink: interaction volume is low and these
+# records are worth landing promptly.
+[sinks.interactions_worm.batch]
+max_bytes = 10000000
+timeout_secs = 30
+
+[sinks.interactions_worm.buffer]
+type = "disk"
+max_size = 268435488
+when_full = "block"

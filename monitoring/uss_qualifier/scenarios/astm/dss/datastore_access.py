@@ -1,0 +1,93 @@
+from monitoring.uss_qualifier.resources.interuss.datastore import (
+    DatastoreDBClusterResource,
+    DatastoreDBNode,
+)
+from monitoring.uss_qualifier.scenarios.scenario import GenericTestScenario
+from monitoring.uss_qualifier.suites.suite import ExecutionContext
+
+
+class DatastoreAccess(GenericTestScenario):
+    # Annotation only -- deliberately NOT `= []`. A mutable class-level default is
+    # shared by every instance, and `self.datastore_nodes.append(...)` below would
+    # resolve on the class, so nodes accumulated across scenario instances: the
+    # second DatastoreAccess in a process would check 2x the nodes, the third 3x,
+    # double-reporting the same participant_id. Masked today only because the
+    # scenario runs once (datastore_mtls.yaml); the utm + netrid v19 + v22a
+    # variants share this base class and run in one process wherever
+    # dss_datastore_cluster is supplied.
+    datastore_nodes: list[DatastoreDBNode]
+
+    def __init__(
+        self,
+        datastore_cluster: DatastoreDBClusterResource,
+    ):
+        super().__init__()
+        self.datastore_nodes = [node.get_client() for node in datastore_cluster.nodes]
+
+    def run(self, context: ExecutionContext):
+        self.begin_test_scenario(context)
+
+        self.begin_test_case("Setup")
+        self._setup()
+        self.end_test_case()
+
+        self.begin_test_case("Verify security interoperability")
+        self._attempt_connection()
+        self.end_test_case()
+
+        self.end_test_scenario()
+
+    def _setup(self) -> None:
+        self.begin_test_step("Validate nodes are reachable")
+        for node in self.datastore_nodes:
+            with self.check(
+                "Node is reachable",
+                node.participant_id,
+            ) as check:
+                reachable, e = node.is_reachable()
+                if not reachable:
+                    check.record_failed(
+                        "Node is not reachable",
+                        details=f"Error message: {e}",
+                    )
+
+        self.end_test_step()
+
+    def _attempt_connection(self) -> None:
+        self.begin_test_step("Attempt to connect in insecure mode")
+        for node in self.datastore_nodes:
+            with self.check(
+                "Node enforces encryption of its communications",
+                node.participant_id,
+            ) as check:
+                encrypted, e = node.no_tls_rejected()
+                if not encrypted:
+                    check.record_failed(
+                        "Node did not reject cleartext communication",
+                        details=f"Reported connection error (if any): {e}",
+                    )
+            with self.check(
+                "Node enforces authentication of its communications",
+                node.participant_id,
+            ) as check:
+                authenticated, e = node.unauthenticated_rejected()
+                if not authenticated:
+                    check.record_failed(
+                        "Node did not reject unauthenticated communication",
+                        details=f"Reported connection error (if any): {e}",
+                    )
+        self.end_test_step()
+
+        self.begin_test_step("Attempt to connect with legacy encryption protocol")
+        for node in self.datastore_nodes:
+            with self.check(
+                "Node rejects legacy encryption protocols",
+                node.participant_id,
+            ) as check:
+                rejected, e = node.legacy_tls_version_rejected()
+                if not rejected:
+                    check.record_failed(
+                        "Node did not reject connection with legacy encryption protocol",
+                        details=f"Reported connection error (if any): {e}",
+                    )
+        self.end_test_step()

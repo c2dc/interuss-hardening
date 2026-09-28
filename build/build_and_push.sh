@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+# This script builds and pushes the InterUSS monitoring docker image and may be
+# run from any working directory.  If DOCKER_URL is present, it will both
+# build the versioned monitoring image and push it to the DOCKER_URL remote.
+# If DOCKER_URL is set:
+#
+# 1) DOCKER_UPDATE_LATEST can be optionally set to `true` in order to publish
+# the latest tag along the version.
+#
+# 2) DOCKER_SIGN can be optionally set to `true` in order to sign the published
+# image using sigstore. When ran within the Github Actions CI, the identity of
+# the CI workflow will be used through the ID token emitted by GitHub. When ran
+# outside of the CI, `cosign` will interactively ask for an authentication
+# against a supported identity provider (Google, GitHub or Microsoft at this time).
+# If DOCKER_SIGN is `true`, CERT_IDENTITY and CERT_ISSUER must be set in order
+# to verify the signature of the published image.
+
+set -eo pipefail
+
+OS=$(uname)
+if [[ "$OS" == "Darwin" ]]; then
+	# OSX uses BSD readlink
+	BASEDIR="$(dirname "$0")/.."
+else
+	BASEDIR=$(readlink -e "$(dirname "$0")/..")
+fi
+cd "${BASEDIR}"
+
+VERSION=$(./scripts/git/version.sh monitoring)
+LATEST_TAG="latest"
+
+if [[ -z "${DOCKER_URL}" ]]; then
+  echo "DOCKER_URL environment variable is not set; building image to interuss/monitoring..."
+  ./monitoring/build.sh
+
+  echo "DOCKER_URL environment variable was not set; built image to interuss/monitoring"
+else
+  TAG="${DOCKER_URL}/monitoring:${VERSION}"
+
+  echo "Building image ${TAG}"
+  ./monitoring/build.sh "${TAG}"
+
+  echo "Pushing docker image ${TAG}..."
+  docker image push "${TAG}"
+
+  echo "Built and pushed docker image ${TAG}"
+
+  if [[ "${DOCKER_SIGN}" == "true" ]]; then
+    # We sign only the first digest of the image. We don't expect multiple ones as we are building for a single architecture.
+    DIGEST=$(docker image inspect --format='{{index .RepoDigests 0}}' "${TAG}")
+    echo "Signing docker image ${TAG} (digest: ${DIGEST})..."
+    cosign sign --yes "${DIGEST}"
+
+    echo "Verifying signature of docker image ${TAG} (digest: ${DIGEST}) after a 30 seconds wait..."
+    sleep 30 # the signature may not be returned immediately after being published, so as a mitigation we wait for 30 seconds before verifying
+    cosign verify --certificate-identity="${CERT_IDENTITY}" --certificate-oidc-issuer="${CERT_ISSUER}" "${DIGEST}"
+
+    echo "Signed and verified signature of docker image ${TAG} (digest: ${DIGEST})..."
+
+  fi
+
+  if [[ "${DOCKER_UPDATE_LATEST}" == "true" ]]; then
+    echo "Tagging docker image ${DOCKER_URL}/monitoring:${LATEST_TAG}..."
+    docker tag "${TAG}" "${DOCKER_URL}/monitoring:${LATEST_TAG}"
+
+    echo "Pushing docker image ${DOCKER_URL}/monitoring:${LATEST_TAG}..."
+    docker image push "${DOCKER_URL}/monitoring:${LATEST_TAG}"
+
+    echo "Built and pushed docker image ${DOCKER_URL}/monitoring:${LATEST_TAG}"
+  fi
+fi

@@ -1,0 +1,98 @@
+name: U-space flight authorisation
+resources:
+  test_env_version_providers: resources.versioning.VersionProvidersResource?
+  prod_env_version_providers: resources.versioning.VersionProvidersResource?
+  conflicting_flights: resources.flight_planning.FlightIntentsResource
+  priority_preemption_flights: resources.flight_planning.FlightIntentsResource
+  invalid_flight_auth_flights: resources.flight_planning.FlightIntentsResource
+  invalid_flight_intents: resources.flight_planning.FlightIntentsResource
+  non_conflicting_flights: resources.flight_planning.FlightIntentsResource
+  flight_planners: resources.flight_planning.FlightPlannersResource?
+  mock_uss: resources.interuss.mock_uss.client.MockUSSResource?
+  dss: resources.astm.f3548.v21.DSSInstanceResource
+  dss_instances: resources.astm.f3548.v21.DSSInstancesResource?
+  dss_datastore_cluster: resources.interuss.datastore.DatastoreDBClusterResource?
+  id_generator: resources.interuss.IDGeneratorResource
+  utm_client_identity: resources.communications.ClientIdentityResource
+  utm_auth: resources.communications.AuthAdapterResource?
+  second_utm_auth: resources.communications.AuthAdapterResource?
+  planning_area: resources.PlanningAreaResource
+  problematically_big_area: resources.VolumeResource
+  system_identity: resources.versioning.SystemIdentityResource?
+  test_exclusions: resources.dev.TestExclusionsResource?
+actions:
+- test_suite:
+    suite_type: suites.astm.utm.f3548_21
+    resources:
+      test_env_version_providers: test_env_version_providers?
+      prod_env_version_providers: prod_env_version_providers?
+      conflicting_flights: conflicting_flights
+      priority_preemption_flights: priority_preemption_flights
+      invalid_flight_intents: invalid_flight_intents
+      non_conflicting_flights: non_conflicting_flights
+      flight_planners: flight_planners?
+      flight_planners_to_clear: flight_planners?
+      mock_uss: mock_uss
+      dss: dss
+      dss_instances: dss_instances
+      dss_datastore_cluster: dss_datastore_cluster?
+      id_generator: id_generator
+      utm_client_identity: utm_client_identity
+      utm_auth: utm_auth?
+      second_utm_auth: second_utm_auth?
+      planning_area: planning_area
+      problematically_big_area: problematically_big_area
+      system_identity: system_identity?
+      test_exclusions: test_exclusions?
+  on_failure: Continue
+- test_scenario:
+    scenario_type: scenarios.flight_planning.PrepareFlightPlannersScenario
+    resources:
+      flight_planners: flight_planners
+      flight_intents: invalid_flight_auth_flights
+      mock_uss: mock_uss
+  on_failure: Abort
+- action_generator:
+    generator_type: action_generators.flight_planning.FlightPlannerCombinations
+    resources:
+      flight_planners: flight_planners
+      invalid_flight_auth_flights: invalid_flight_auth_flights
+    specification:
+      resources:
+        flight_planners: flight_planners
+        invalid_flight_auth_flights: invalid_flight_auth_flights
+      action_to_repeat:
+        test_scenario:
+          scenario_type: scenarios.uspace.flight_auth.Validation
+          resources:
+            flight_intents: invalid_flight_auth_flights
+            flight_planner: flight_planner
+        on_failure: Continue
+      flight_planners_source: flight_planners
+      roles:
+      - flight_planner
+  on_failure: Continue
+participant_verifiable_capabilities:
+    - id: no_failures
+      name: Fails No Existing Tests
+      description: Until testing coverage is sufficiently complete to verify all intended requirements for particular roles, this capability may be useful in communicating that the participant has passed all existing applicable tests for their role and capabilities.  This capability should be removed once test coverage extends to all intended requirements.
+      verification_condition:
+          all_conditions:
+                conditions:
+                    - no_failed_checks: {}
+                    - capability_verified:
+                          capability_ids:
+                            - no_failures
+                          # Look for the no_failures capability in any child action that is a suites.astm.utm.f3548_21 test suite
+                          capability_location: '$.actions[?(@.test_suite)].test_suite[?(@.suite_type=="suites.astm.utm.f3548_21")]'
+                          #                     ^ Root element is the report for the test suite in which this capability is defined (the test suite defined by this YAML file)
+                          #                       ^ Select the value corresponding to the "actions" key
+                          #                              ^ Keep only the items (in "actions") which have a "test_suite" key
+                          #                                                ^ Select the value corresponding to the "test_suite" key (type is TestSuiteReport)
+                          #                                                          ^ Keep only the items whose "suite_type" key has a value of "suites.astm.utm.f3548_21"
+
+                          # Alternately, look for the no_failures capability in any *descendant* test suite that is a suites.astm.utm.f3548_21 type
+                          # capability_location: '$..*[?(@.suite_type=="suites.astm.utm.f3548_21")]'
+
+                          # Alternately, look for the no_failures capability in the specific location where the F3548-21 test suite is
+                          # capability_location: '$.actions[0].test_suite'

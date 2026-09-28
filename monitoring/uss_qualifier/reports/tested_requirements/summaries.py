@@ -1,0 +1,94 @@
+from collections.abc import Iterable
+
+from implicitdict import StringBasedDateTime
+
+from monitoring.uss_qualifier.configurations.configuration import ParticipantID
+from monitoring.uss_qualifier.reports.report import TestRunReport, TestSuiteActionReport
+from monitoring.uss_qualifier.reports.tested_requirements.data_types import (
+    FAIL_CLASS,
+    FINDINGS_CLASS,
+    NOT_TESTED_CLASS,
+    PASS_CLASS,
+    ParticipantVerificationStatus,
+    TestedBreakdown,
+    TestRunInformation,
+)
+from monitoring.uss_qualifier.signatures import compute_signature
+
+
+def compute_test_run_information(report: TestRunReport) -> TestRunInformation:
+    def print_datetime(t: StringBasedDateTime | None) -> str | None:
+        if t is None:
+            return None
+        return t.datetime.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+    return TestRunInformation(
+        test_run_id=compute_signature(report),
+        start_time=print_datetime(report.report.start_time),
+        end_time=print_datetime(report.report.end_time),
+        baseline=report.baseline_signature,
+        environment=report.environment_signature,
+    )
+
+
+def compute_overall_status(
+    participant_breakdown: TestedBreakdown,
+) -> ParticipantVerificationStatus:
+    overall_status = ParticipantVerificationStatus.Pass
+    for package in participant_breakdown.packages:
+        for req in package.requirements:
+            if req.classname == FAIL_CLASS:
+                return ParticipantVerificationStatus.Fail
+            elif req.classname == NOT_TESTED_CLASS:
+                overall_status = ParticipantVerificationStatus.NotFullyVerified
+            elif req.classname == FINDINGS_CLASS:
+                if overall_status == ParticipantVerificationStatus.Pass:
+                    overall_status = ParticipantVerificationStatus.PassWithFindings
+            elif req.classname == PASS_CLASS:
+                pass
+            else:
+                return ParticipantVerificationStatus.Unknown
+    return overall_status
+
+
+def find_participant_system_versions(
+    report: TestSuiteActionReport,
+    participant_ids: ParticipantID | Iterable[ParticipantID],
+) -> list[str]:
+    if isinstance(participant_ids, ParticipantID):
+        participant_ids = [participant_ids]
+    result = []
+    if "test_suite" in report and report.test_suite:
+        for action in report.test_suite.actions:
+            result.extend(find_participant_system_versions(action, participant_ids))
+    elif "action_generator" in report and report.action_generator:
+        for action in report.action_generator.actions:
+            result.extend(find_participant_system_versions(action, participant_ids))
+    elif "test_scenario" in report and report.test_scenario:
+        if (
+            report.test_scenario.scenario_type
+            in (
+                "scenarios.versioning.get_system_versions.GetSystemVersions",
+                "scenarios.versioning.GetSystemVersions",
+            )
+            and "notes" in report.test_scenario
+            and report.test_scenario.notes is not None
+        ):
+            for participant_id in participant_ids:
+                if participant_id in report.test_scenario.notes:
+                    system_identity, version = report.test_scenario.notes[
+                        participant_id
+                    ].message.split("=")
+                    result.append(version)
+    return result
+
+
+def get_system_version(system_versions: list[str]) -> str | None:
+    if not system_versions:
+        return None
+    elif len(system_versions) > 1 and any(
+        v != system_versions[0] for v in system_versions
+    ):
+        return "CONFLICTED: " + " and ".join(system_versions)
+    else:
+        return system_versions[0]

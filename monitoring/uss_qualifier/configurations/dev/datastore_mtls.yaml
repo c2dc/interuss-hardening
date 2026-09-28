@@ -1,0 +1,65 @@
+$content_schema: monitoring/uss_qualifier/configurations/configuration/USSQualifierConfiguration.json
+# Verifies that the local CockroachDB cluster brought up by build/dev/run_locally.sh
+# runs in secure mode: every node must reject cleartext connections, reject
+# unauthenticated connections and reject pre-TLS1.2 connections.
+#
+# Assumes the default topology (NUM_USS=2, NUM_NODES=1) so that both
+# datastore.uss1.localutm and datastore.uss2.localutm resolve on the ecosystem
+# network. Run with:
+#   monitoring/uss_qualifier/run_locally.sh configurations.dev.datastore_mtls
+v1:
+  test_run:
+    resources:
+      resource_declarations:
+        dss_datastore_cluster:
+          resource_type: resources.interuss.datastore.DatastoreDBClusterResource
+          specification:
+            nodes:
+              - participant_id: uss1
+                host: datastore.uss1.localutm
+                port: 26257
+              - participant_id: uss2
+                host: datastore.uss2.localutm
+                port: 26257
+    action:
+      test_suite:
+        suite_definition:
+          name: Datastore mTLS verification
+          resources:
+            dss_datastore_cluster: resources.interuss.datastore.DatastoreDBClusterResource
+          actions:
+            - test_scenario:
+                scenario_type: scenarios.astm.utm.dss.DatastoreAccess
+                resources:
+                  datastore_cluster: dss_datastore_cluster
+              on_failure: Continue
+        resources:
+          dss_datastore_cluster: dss_datastore_cluster
+  artifacts:
+    raw_report:
+      indent: 2
+    sequence_view: {}
+    report_html: {}
+    timing_report: {}
+  validation:
+    $content_schema: monitoring/uss_qualifier/reports/validation/report_validation/ValidationConfiguration.json
+    criteria:
+      - applicability:
+          test_scenarios: {}
+        pass_condition:
+          each_element:
+            has_execution_error: false
+      # Stricter than the shared "normal_test": every check must pass, including
+      # the Low-severity encryption/authentication checks.
+      - applicability:
+          failed_checks: {}
+        pass_condition:
+          elements:
+            count:
+              equal_to: 0
+      - applicability:
+          skipped_actions: {}
+        pass_condition:
+          elements:
+            count:
+              equal_to: 0

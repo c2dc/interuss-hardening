@@ -1,0 +1,409 @@
+# Full suite of mock_uss instances, capable of serving all local uss_qualifier tests.
+# Requires the interoperability ecosystem that can be brought up with build/dev/run_locally.sh
+
+# Bound the size of every container's stdout/stderr capture (Docker json-file
+# driver). Without this each *-json.log grows unbounded until the container is
+# removed. 10m x 3 = 30 MiB per container. Matches the anchor of the same name
+# in build/dev/docker-compose.yaml and build/dev/docker-compose.secrets.yaml.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  mock_uss_scdsc_a:
+    container_name: mock_uss_scdsc_a
+    hostname: scdsc.uss1.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    command: mock_uss/start.sh
+    environment:
+      - MOCK_USS_AUTH_SPEC=DummyOAuth(https://oauth.authority.localutm:8443/token,uss1)
+      - MOCK_USS_DSS_URL=https://dss1.uss1.localutm
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/scdsc.uss1.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/scdsc.uss1.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=scdsc.uss1.localutm,localhost,host.docker.internal
+      - MOCK_USS_BASE_URL=https://scdsc.uss1.localutm
+      # TODO: remove interaction_logging once dedicated mock_uss is involved in tests
+      - MOCK_USS_SERVICES=scdsc,versioning,interaction_logging,flight_planning
+      - MOCK_USS_INTERACTIONS_LOG_DIR=output/scdsc_a_interaction_logs
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8074:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+      - ./output/scdsc_a_interaction_logs:/app/monitoring/mock_uss/output/scdsc_a_interaction_logs
+    user: "${UID_GID}"
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - scd
+
+  mock_uss_scdsc_b:
+    container_name: mock_uss_scdsc_b
+    hostname: scdsc.uss2.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    command: mock_uss/start.sh
+    environment:
+      - MOCK_USS_AUTH_SPEC=DummyOAuth(https://oauth.authority.localutm:8443/token,uss2)
+      - MOCK_USS_DSS_URL=https://dss1.uss2.localutm
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/scdsc.uss2.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/scdsc.uss2.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=scdsc.uss2.localutm,localhost,host.docker.internal
+      - MOCK_USS_BASE_URL=https://scdsc.uss2.localutm
+      - MOCK_USS_SERVICES=scdsc,versioning,flight_planning
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8094:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - scd
+
+  mock_uss_geoawareness:
+    container_name: mock_uss_geoawareness
+    hostname: geoawareness.uss1.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    command: mock_uss/start.sh
+    environment:
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/geoawareness.uss1.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/geoawareness.uss1.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=geoawareness.uss1.localutm,localhost,host.docker.internal
+      - MOCK_USS_SERVICES=geoawareness
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8076:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - geoawareness
+
+  mock_uss_ridsp:
+    container_name: mock_uss_ridsp
+    hostname: v22a.ridsp.uss1.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    command: mock_uss/start.sh
+    environment:
+      - MOCK_USS_AUTH_SPEC=DummyOAuth(https://oauth.authority.localutm:8443/token,uss1)
+      - MOCK_USS_DSS_URL=https://dss1.uss1.localutm
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/v22a.ridsp.uss1.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/v22a.ridsp.uss1.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=v22a.ridsp.uss1.localutm,localhost,host.docker.internal
+      - MOCK_USS_BASE_URL=https://v22a.ridsp.uss1.localutm
+      - MOCK_USS_SERVICES=ridsp,interaction_logging
+      - MOCK_USS_INTERACTIONS_LOG_DIR=output/ridsp_interaction_logs
+      - MOCK_USS_RID_VERSION=F3411-22a
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8081:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+      - ./output/ridsp_interaction_logs:/app/monitoring/mock_uss/output/ridsp_interaction_logs
+    user: "${UID_GID}"
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - rid
+
+  mock_uss_riddp:
+    container_name: mock_uss_riddp
+    hostname: v22a.riddp.uss1.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    command: mock_uss/start.sh
+    environment:
+      - MOCK_USS_AUTH_SPEC=DummyOAuth(https://oauth.authority.localutm:8443/token,uss1)
+      - MOCK_USS_DSS_URL=https://dss1.uss1.localutm
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/v22a.riddp.uss1.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/v22a.riddp.uss1.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=v22a.riddp.uss1.localutm,localhost,host.docker.internal
+      - MOCK_USS_BASE_URL=https://v22a.riddp.uss1.localutm
+      - MOCK_USS_SERVICES=riddp,interaction_logging
+      - MOCK_USS_INTERACTIONS_LOG_DIR=output/riddp_interaction_logs
+      - MOCK_USS_RID_VERSION=F3411-22a
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8083:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+      - ./output/riddp_interaction_logs:/app/monitoring/mock_uss/output/riddp_interaction_logs
+    user: "${UID_GID}"
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - rid
+
+  mock_uss_ridsp_v19:
+    container_name: mock_uss_ridsp_v19
+    hostname: v19.ridsp.uss2.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    command: mock_uss/start.sh
+    environment:
+      - MOCK_USS_AUTH_SPEC=DummyOAuth(https://oauth.authority.localutm:8443/token,uss2)
+      - MOCK_USS_DSS_URL=https://dss1.uss2.localutm
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/v19.ridsp.uss2.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/v19.ridsp.uss2.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=v19.ridsp.uss2.localutm,localhost,host.docker.internal
+      - MOCK_USS_BASE_URL=https://v19.ridsp.uss2.localutm
+      - MOCK_USS_SERVICES=ridsp,interaction_logging
+      - MOCK_USS_INTERACTIONS_LOG_DIR=output/ridsp_v19_interaction_logs
+      - MOCK_USS_RID_VERSION=F3411-19
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8071:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+      - ./output/ridsp_v19_interaction_logs:/app/monitoring/mock_uss/output/ridsp_v19_interaction_logs
+    user: "${UID_GID}"
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - rid_v19
+
+  mock_uss_riddp_v19:
+    container_name: mock_uss_riddp_v19
+    hostname: v19.riddp.uss3.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    command: mock_uss/start.sh
+    environment:
+      - MOCK_USS_AUTH_SPEC=DummyOAuth(https://oauth.authority.localutm:8443/token,uss3)
+      - MOCK_USS_DSS_URL=https://dss1.uss1.localutm
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/v19.riddp.uss3.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/v19.riddp.uss3.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=v19.riddp.uss3.localutm,localhost,host.docker.internal
+      - MOCK_USS_BASE_URL=https://v19.riddp.uss3.localutm
+      - MOCK_USS_SERVICES=riddp,interaction_logging
+      - MOCK_USS_INTERACTIONS_LOG_DIR=output/riddp_v19_interaction_logs
+      - MOCK_USS_RID_VERSION=F3411-19
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8073:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+      - ./output/riddp_v19_interaction_logs:/app/monitoring/mock_uss/output/riddp_v19_interaction_logs
+    user: "${UID_GID}"
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - rid_v19
+
+  mock_uss_tracer:
+    container_name: mock_uss_tracer
+    hostname: tracer.uss4.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    working_dir: /app/monitoring/mock_uss
+    command: ./start.sh
+    environment:
+      - MOCK_USS_AUTH_SPEC=DummyOAuth(https://oauth.authority.localutm:8443/token,uss4)
+      - MOCK_USS_DSS_URL=https://dss1.uss1.localutm
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/tracer.uss4.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/tracer.uss4.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=tracer.uss4.localutm,localhost,host.docker.internal
+      - MOCK_USS_BASE_URL=https://tracer.uss4.localutm
+      - MOCK_USS_TRACER_OUTPUT_FOLDER=output/tracer
+      - "MOCK_USS_UI_USERS=${MOCK_USS_UI_USERS:-admin:admin=admin;viewer=}"
+      - "GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}"
+      - "GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}"
+      - MOCK_USS_SERVICES=tracer
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8078:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+      - ./output/tracer:/app/monitoring/mock_uss/output/tracer
+    user: "${UID_GID}"
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - scd
+      - rid
+      - rid_v19
+
+  mock_uss_scdsc_interaction_log:
+    container_name: mock_uss_scdsc_interaction_log
+    hostname: scdsc.log.uss6.localutm
+    logging: *default-logging
+    image: interuss/monitoring
+    pull_policy: never
+    command: mock_uss/start.sh
+    environment:
+      - MOCK_USS_AUTH_SPEC=DummyOAuth(https://oauth.authority.localutm:8443/token,uss6)
+      - MOCK_USS_DSS_URL=https://dss1.uss1.localutm
+      - MOCK_USS_PUBLIC_KEY=https://oauth.authority.localutm:8443/.well-known/jwks.json
+      - MOCK_USS_TLS_CERT=/secrets/mock-tls/scdsc.log.uss6.localutm/server.crt
+      - MOCK_USS_TLS_KEY=/secrets/mock-tls/scdsc.log.uss6.localutm/server.key
+      - REQUESTS_CA_BUNDLE=/secrets/oauth/clients/ca.crt
+      - AUTH_ADAPTER_CERT_DIR=/secrets/oauth/clients
+      - MOCK_USS_TOKEN_AUDIENCE=scdsc.log.uss6.localutm,localhost,host.docker.internal
+      - MOCK_USS_BASE_URL=https://scdsc.log.uss6.localutm
+      - MOCK_USS_SERVICES=scdsc,interaction_logging,flight_planning,versioning
+      - MOCK_USS_INTERACTIONS_LOG_DIR=output/scdsc_interaction_logs
+      - MOCK_USS_PORT=443
+      - MOCK_USS_PROXY_VALUES=x_for=1,x_proto=1,x_host=1,x_prefix=1,x_port=1
+    expose:
+      - 443
+    ports:
+      - 8095:443
+    volumes:
+      - ../../build/test-certs:/var/test-certs:ro
+      - ../../build/dev/dss-secrets:/secrets:ro
+      - ./output/scdsc_interaction_logs:/app/monitoring/mock_uss/output/scdsc_interaction_logs
+    user: "${UID_GID}"
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      start_period: 30s
+    profiles:
+      - '' # starts when no profile is provided
+      - scd
+
+  mock_uss_tls_proxy:
+    container_name: mock_uss_tls_proxy
+    hostname: tls_proxy.localutm
+    logging: *default-logging
+    image: nginx:1.25
+    ports:
+      - 4430:4430
+    volumes:
+      - ./tls_proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tls_proxy/localhost.crt:/etc/certs/localhost.crt:ro
+      - ./tls_proxy/localhost.key:/etc/certs/localhost.key:ro
+    restart: always
+    networks:
+      - interop_ecosystem_network
+    profiles:
+      - '' # starts when no profile is provided
+      - scd
+      - rid
+      - rid_v19
+
+networks:
+  interop_ecosystem_network:
+    external: true

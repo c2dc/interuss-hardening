@@ -1,0 +1,79 @@
+$content_schema: monitoring/uss_qualifier/configurations/configuration/USSQualifierConfiguration.json
+v1:
+  test_run:
+    resources:
+      resource_declarations:
+        utm_auth: {$ref: 'library/environment.yaml#/utm_auth'}
+        access_token_expectations:
+          resource_type: resources.communications.AccessTokensExpectationsResource
+          specification:
+            expectations:
+              - request:
+                  intended_audience: test_audience.example.com
+                  scopes:
+                    - rid.inject_test_data
+                expectations:
+                  has_header_values:
+                    - claim: typ
+                      equals_string_value: JWT
+                    - claim: alg
+                      equals_string_value: RS256
+                  # A literal PEM key can't be hardcoded here: the hardened OAuth
+                  # flow generates a fresh
+                  # signing key per environment `up`, by design (no static,
+                  # committable key). validates_against_public_key also accepts
+                  # a JWKS URL (see fix_key() in monitorlib/auth_validation.py),
+                  # which resolves dynamically against whichever key is
+                  # currently published -- exactly what's needed here.
+                  validates_against_public_key: https://oauth.authority.localutm:8443/.well-known/jwks.json
+                  has_claim_values:
+                    - claim: exp
+                      # Real tokens are short-lived (max 300s, oauth_signer.py
+                      # OAUTH_MAX_TTL) -- not the old dummy-oauth's 1 hour.
+                      beyond_request_time_offset: 4m30s
+                      within_request_time_offset: 5m30s
+                    - claim: iss
+                      equals_string_value: oauth.authority.localutm
+                    - claim: sub
+                      equals_string_value: uss_qualifier
+        auth_adapter_expectations:
+          resource_type: resources.communications.AuthAdapterExpectationsResource
+          specification:
+            expectations:
+              # See monitoring/monitorlib/auth.py for the set of concrete AuthAdapter types.
+              - adapter_type: DummyOAuth
+                attribute_values:
+                  # Attributes are for the concrete AuthAdapter instance available to the GetAccessTokens scenario.
+                  # See monitoring/monitorlib/auth.py for the definitions of concrete auth adapters and their attributes.
+                  - name: _oauth_token_endpoint
+                    equals_string_value: https://oauth.authority.localutm:8443/token
+
+    action:
+      test_suite:
+        suite_definition:
+          name: Access tokens validation test suite
+          resources:
+            auth_adapter: resources.communications.AuthAdapterResource
+            token_expectations: resources.communications.AccessTokensExpectationsResource?
+            adapter_expectations: resources.communications.AuthAdapterExpectationsResource?
+          actions:
+            - test_scenario:
+                scenario_type: scenarios.interuss.communications.GetAccessTokens
+                resources:
+                  auth_adapter: auth_adapter
+                  token_expectations: token_expectations
+                  adapter_expectations: adapter_expectations
+                on_failure: Continue
+        resources:
+          auth_adapter: utm_auth
+          token_expectations: access_token_expectations
+          adapter_expectations: auth_adapter_expectations
+
+    execution:
+      stop_fast: false
+
+  artifacts:
+    sequence_view: {}
+
+  validation:
+    $ref: ./library/validation.yaml#/normal_test

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  {% if title %}
+    <title>{{ title }} - Tracer</title>
+  {% else %}
+    <title>Tracer (InterUSS Platform)</title>
+  {% endif %}
+</head>
+<body>
+  <div>
+    Tracer:
+    <a href="{{ url_for('tracer_list_logs') }}">Home (logs)</a>
+    <a href="{{ url_for('tracer_observation_areas_ui') }}">Observation Areas</a>
+    {% if current_user.is_authenticated %}
+      <span>
+        {{ current_user.username }}
+        <a href="{{ url_for('ui_logout') }}">Log out</a>
+      </span>
+    {% else %}
+      <a href="{{ url_for('ui_login') }}">Log in</a>
+    {% endif %}
+  </div>
+  <hr>
+  <div>
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

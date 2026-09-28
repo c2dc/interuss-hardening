@@ -1,0 +1,8 @@
+{% extends "tracer/base.html" %}
+{% from "explorer.html" import explorer_header, explorer_content, explorer_footer %}
+
+{% block content %}
+  {{ explorer_header() }}
+  {{ explorer_content("top_node", log) }}
+  {{ explorer_footer(["top_node"]) }}
+{% endblock %}

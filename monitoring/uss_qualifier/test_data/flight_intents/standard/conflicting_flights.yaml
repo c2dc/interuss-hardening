@@ -1,0 +1,215 @@
+$content_schema: monitoring/uss_qualifier/resources/flight_planning/flight_intent/FlightIntentCollection.json
+intents:
+  flight1_planned:
+    full:
+      basic_information:
+        usage_state: Planned
+        uas_state: Nominal
+        area:
+          - outline_polygon:
+              # There are 0.00000898331 (roughly 0.00001) degrees of latitude (and longitude, at the equator) per meter.
+              # Therefore, each value below is roughly in meters.
+              vertices:
+                - {lng: -0.00015, lat: -0.00020}
+                - {lng: -0.00015, lat:  0.00010}
+                - {lng:  0.00050, lat:  0.00010}
+                - {lng:  0.00055, lat: -0.00025}
+            altitude_lower:
+              value: 0.01
+              reference: W84
+              units: M
+            altitude_upper:
+              value: 30
+              reference: W84
+              units: M
+            start_time:
+              offset_from:
+                starting_from:
+                  time_during_test: TimeOfEvaluation
+                offset: -1s
+            end_time:
+              offset_from:
+                starting_from:
+                  time_during_test: TimeOfEvaluation
+                offset: 45m
+
+      astm_f3548_21:
+        priority: 0
+
+      uspace_flight_authorisation:
+        $ref: ./flight_auths.yaml#/standard
+
+  flight1c_planned:
+    delta:
+      source: flight1_planned
+      mutation:
+        basic_information:
+          area:
+            - outline_polygon:
+                +vertices:
+                  - {lng: 0.00030, lat: -0.00020}
+                  - {lng: 0.00030, lat:  0.00010}
+                  - {lng: 0.00050, lat:  0.00010}
+                  - {lng: 0.00055, lat: -0.00025}
+              altitude_lower:
+                value: -5.04
+              altitude_upper:
+                value: 35
+
+  flight1c_activated:
+    delta:
+      source: flight1c_planned
+      mutation:
+        basic_information:
+          usage_state: InUse
+          area:
+            - outline_polygon:
+                +vertices:
+                  - {lng: 0.00030, lat: -0.00020}
+                  - {lng: 0.00030, lat: 0.00050}
+                  - {lng: 0.00050, lat: 0.00010}
+                  - {lng: 0.00055, lat: -0.00025}
+              altitude_lower:
+                value: 0.06
+
+  flight1m_planned:
+    delta:
+      source: flight1_planned
+      mutation:
+        basic_information:
+          area:
+            - outline_polygon:
+                +vertices:
+                  - {lng: 0.00010, lat: -0.00020}
+                  - {lng: 0.00010, lat: 0.00010}
+                  - {lng: 0.00050, lat: 0.00010}
+                  - {lng: 0.00055, lat: -0.00025}
+              altitude_lower:
+                value: -30.03
+
+  flight2_planned:
+    full:
+      basic_information:
+        usage_state: Planned
+        uas_state: Nominal
+        area:
+          - outline_polygon:
+              vertices:
+                - {lng: -0.00020, lat:  0.00020}
+                - {lng:  0.00000, lat: -0.00025}
+                - {lng:  0.00020, lat:  0.00015}
+                - {lng:  0.00000, lat:  0.00050}
+            altitude_lower:
+              value: -1.07
+              reference: W84
+              units: M
+            altitude_upper:
+              value: 28
+              reference: W84
+              units: M
+            start_time:
+              offset_from:
+                starting_from:
+                  time_during_test: TimeOfEvaluation
+                offset: -1s
+            end_time:
+              offset_from:
+                starting_from:
+                  time_during_test: TimeOfEvaluation
+                offset: 45m
+
+      astm_f3548_21:
+        priority: 100
+
+      uspace_flight_authorisation:
+        $ref: ./flight_auths.yaml#/standard
+
+  flight1_activated:
+    delta:
+      source: flight1_planned
+      mutation:
+        basic_information:
+          usage_state: InUse
+          area:
+            - altitude_lower:
+                value: 0.02
+
+  flight1m_activated:
+    delta:
+      source: flight1m_planned
+      mutation:
+        basic_information:
+          usage_state: InUse
+          area:
+            - altitude_lower:
+                value: -30.05
+
+  flight2_activated:
+    delta:
+      source: flight2_planned
+      mutation:
+        basic_information:
+          usage_state: InUse
+          area:
+            - altitude_lower:
+                value: 0.08
+
+  flight2m_activated:
+    delta:
+      source: flight2_activated
+      mutation:
+        basic_information:
+          area:
+            - outline_polygon:
+                +vertices:
+                  - {lng: -0.00020, lat: 0.00020}
+                  - {lng: 0.00040, lat: 0.00015}
+                  - {lng: 0.00000, lat: 0.00050}
+              altitude_lower:
+                value: -3.09
+              altitude_upper:
+                value: 50
+
+  equal_prio_flight2m_planned:
+    delta:
+      source: flight2m_activated
+      mutation:
+        basic_information:
+          usage_state: Planned
+          area:
+            - altitude_lower:
+                value: 45.13
+        astm_f3548_21:
+          priority: 0
+
+  equal_prio_flight2_planned:
+    delta:
+      source: flight2_activated
+      mutation:
+        basic_information:
+          usage_state: Planned
+          area:
+            - altitude_lower:
+                value: 0.10
+        astm_f3548_21:
+          priority: 0
+
+  equal_prio_flight2_activated:
+    delta:
+      source: equal_prio_flight2_planned
+      mutation:
+        basic_information:
+          usage_state: InUse
+          area:
+            - altitude_lower:
+                value: 0.11
+
+  equal_prio_flight2_nonconforming:
+    delta:
+      source: equal_prio_flight2_activated
+      mutation:
+        basic_information:
+          uas_state: OffNominal
+          area:
+            - altitude_lower:
+                value: 0.12

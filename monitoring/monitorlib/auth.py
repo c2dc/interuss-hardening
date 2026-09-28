@@ -1,0 +1,682 @@
+import base64
+import datetime
+import hashlib
+import os
+import re
+import urllib.parse
+import uuid
+from typing import Any
+
+import cryptography.exceptions
+import cryptography.hazmat.backends
+import cryptography.hazmat.primitives.hashes
+import cryptography.hazmat.primitives.serialization
+import cryptography.x509
+import jwcrypto.common
+import jwcrypto.jwk
+import jwcrypto.jws
+import jwcrypto.jwt
+import requests
+from google import auth as google_auth
+from google.auth import impersonated_credentials
+from google.auth.transport import requests as google_requests
+from google.oauth2 import service_account
+
+from monitoring.monitorlib.infrastructure import AuthAdapter, AuthSpec
+
+_UNIX_EPOCH = datetime.datetime.fromtimestamp(0, datetime.UTC)
+
+
+class NoAuth(AuthAdapter):
+    """Auth adapter that generates tokens without an auth server.
+
+    While no server is used, the access tokens generated are fully valid and their
+    signatures will validate against test-certs/auth2.pem.
+    """
+
+    # This is the private key from test-certs/auth2.key.
+    dummy_private_key = jwcrypto.jwk.JWK.from_pem(
+        b"-----BEGIN RSA PRIVATE KEY-----\n"
+        b"MIIEowIBAAKCAQEAtjrMt+vOxuqjOU+hwrVAgHjBMs9nMw1ONSpiLOpUQSnqvBwB\n"
+        b"0Zba+8e2tGJeQDWEf8KoVt3PfMa34EomLhWZGWEosftV8gZSbneDjUnE+kUTXvZm\n"
+        b"MFa2Byc9njsl5N7dOC1pT7qHNJOB9RhK/9ehPl7XczRuIJR7N/ZFk+XZSlFh5wer\n"
+        b"q7ME7GdhBPFaO30KZRmRhgwVtAP2kA8sSrqgxXuuyy808UvT3MkzL63Sv/EzQSs8\n"
+        b"YLVAn/BwiQlmWxKFmtzNk9RJdYkxRJN1E9E2sS2i6b55j94hiPwwQ16GsAAWUT+i\n"
+        b"jezlHuGZU+OLYtYfoHy+4Ku31doQc0ujvtYOJQIDAQABAoIBACTuccLslXGW6BGb\n"
+        b"Y+s0FKh00KLdicq87Za0ykTUENNMDXimLHAvpJ3Wcd7I+NUGg53o83j3Zy+gjm90\n"
+        b"V5yLYAXWvQqlJ1vvkBE3Q4AE7VjTWwOp6DfvuuBkQYap8hoaWLcj7O3tna04H+Ru\n"
+        b"UfTb3J/pVLzSaWdM8FP9I0jAEnOPBwwgmQ74G/NmCZpv39boLJQ2sdqY9gSaQUsn\n"
+        b"4fwKtQQ6yBLDw8mkNnzxnRxXe7FiKjKtnTUp7GhELoQ37XbwJRJTlBA9jirxadss\n"
+        b"4NiHpSq+QhkHdJPMOdE/DTZ0H52mJe92t+EEptJADX4O4b54oNaJ4p99Zk0rlW97\n"
+        b"s3lowdkCgYEAygLJiYBpv/wuJd1peqLoYnOIBriFQi7vSF+Ho4UNnS76IapSZ/qY\n"
+        b"nUGrTYNaNhTg39Gsbpdax7bnaWiTDNzdCiiQxMc5BSR3tDF52tIaOqvVFgd5KRu/\n"
+        b"7pOtH8fToR770KviT85G8Wb+ozFY7F0/yklU+OQEtfmuAVs6bEx4m8cCgYEA5u6e\n"
+        b"e00l01h/SvM7CoYdoOG9N1vyhMYbUBDR6SUIAaR25/UJPH7kPpAqxXKR1BWJh7q+\n"
+        b"1cBF0ZFnQ3xkRsfETcvLPJLAsIMwd1HN2sJ0/tPSgFSw6RTFswa3SlpxON+8shcR\n"
+        b"2617UhFDc/5MfCXiNb8u/4Ng7iacfjVhdLehzrMCgYAX1g5byCgyPBph42dPzisn\n"
+        b"esRhLqKitZEMdCE4HToHAwUGtec1V69sVtRUuBwL55jFMCNthTRz/lP97xXy3ZjD\n"
+        b"WxgB8BP9VFk/jNr5A/OOWrow+D7Gp/yUtR4ncte42kQSUkXI7ukWEPYY4XjBoxsk\n"
+        b"zlRVbepUYpqylEYngzpz/wKBgQCNwSntXDT839T7iATU9/CWAhupMLrUv9qiMkD4\n"
+        b"EXAxuef3iNWLmgS3Vr26iBJ2EmZit8JO6YCyHMQ7i87uF9ArRQ7Tdu3rLAyDIebw\n"
+        b"Au/YQOR1PAeAe+zDcTrv3Eal98kXtMuUgpAxl0FFoXMHviV2go3x8I5+gZsMae4R\n"
+        b"vGsJuwKBgH1KY+N3629mtdyhb1xfoxFRDq0Izyl/OpeWZHe4wd+nklkRsj0CvLHz\n"
+        b"m+F5V4CxlUufLadvg9KFxd48UWTwqjrTysixDN4MUPngFoBSh0i/egq6DJlsEhAL\n"
+        b"0Q9fZLTCV7sKG9FAUCWT6nE+k8K9U0hTCUeyVqx85iTUu10zQrTR\n"
+        b"-----END RSA PRIVATE KEY-----"
+    )
+
+    EXPIRATION = 3600  # seconds
+
+    def __init__(self, sub: str = "uss_noauth", aud_override: str | None = None):
+        super().__init__()
+        self.sub = sub
+        self._aud_override = aud_override
+
+    # Overrides method in AuthAdapter
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        timestamp = int(
+            (datetime.datetime.now(datetime.UTC) - _UNIX_EPOCH).total_seconds()
+        )
+        claims = {
+            "sub": self.sub,
+            "client_id": self.sub,
+            "scope": " ".join(scopes),
+            "aud": intended_audience,
+            "nbf": timestamp - 1,
+            "exp": timestamp + NoAuth.EXPIRATION,
+            "iss": "NoAuth",
+            "jti": str(uuid.uuid4()),
+        }
+        if self._aud_override is not None:
+            claims["aud"] = self._aud_override
+        jwt = jwcrypto.jwt.JWT(
+            header={"typ": "JWT", "alg": "RS256"},
+            claims=claims,
+            algs=["RS256"],
+        )
+        jwt.make_signed_token(NoAuth.dummy_private_key)
+        return jwt.serialize()
+
+
+class InvalidTokenSignatureAuth(AuthAdapter):
+    """Auth adapter that generates well-formed tokens that are signed with an unknown private key.
+
+    The generated tokens are not expected to be accepted,
+    and should be used in scenarios that test the authentication logic.
+    """
+
+    # A random RSA2048 private key
+    unknown_private_key = jwcrypto.jwk.JWK.from_pem(
+        b"-----BEGIN PRIVATE KEY-----\n"
+        b"MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCsa9ZYfRoeA1A5\n"
+        b"oUY38payXpOQzjFUVmm2CUh2WxY1HV3d2/0nkWcjHSD5wIKRCqhBQ3T3rj1AJm4f\n"
+        b"mUasH0dAurutgggTDTxpX4XiskYdG8NuZfyQxtRMGBivFnbySi3A0FwOWZPW3ZXz\n"
+        b"RC2r27URC1IvZc2cpSkbNngK9OUodbxX/pbFU6ltkPbyztcLgdnAcC/R7JfUUmgm\n"
+        b"kmBg9ZTyCFB1gsX3Bgx2YSBGyjLejfTUBcySoJuYFPobSKxBpO1r3S0XWCnz4WOu\n"
+        b"ho5asoqy23ucI5VXXcOSaNVIBVnJVhFyCum04m8E2BKUegJfsRU3DMmVA2kaZaTL\n"
+        b"rcPqDbPzAgMBAAECggEAC5ATyM1i8f5Q4/x/xAK9vmp/ROe/ASPmZPHMbTuAisFU\n"
+        b"aSt2l6+1lfI/IuCZIPbw/6dxcaa6rtGk8vOJfMOAOMQND/63YeeyVHK2fNRtxUf2\n"
+        b"XDH0tRTQaeX3yc4c3fTBiruuYLv7IR6tDqpU0cCjLOhwc4NFPasJzaxicoGn2IWo\n"
+        b"kItqGCBn9qz1Qpxe+GZq4Yzebja2czac0Y4khsvmDcWKuFvaX6rU58iiLEekaHeH\n"
+        b"lu288MKYNUqdQ63HNhWhsAm+abVArAgcl2zWPwf5ex6jCyBxsPMRfoCUwjuJzI28\n"
+        b"3AgOTrwnbmdrjEiF+2UVreTSHoBnVyMfGhAKZ1a0OQKBgQDZoANU/8jQZBSS4tdL\n"
+        b"z5RIBa0pQEvV3mrB4n7rMvSytiYkCTHdD8HUT5PRSSF0fbqF6E3c7Fpq/4wP+Fhv\n"
+        b"32+qJR/Y6uW6dMOwWMGAH5NV0+rvHaqCKRVugSvPx2DzZ7pJ0rEpfdCagc8mfIub\n"
+        b"f0UBlnp13QVeNEfDPhJdk7HZ7QKBgQDK0z4ljFBNpRImdgn5gssR72697cSZim8E\n"
+        b"F/wJinn9dHdCgUB/2hcpB4y2yzomHJAYZVI+I4jT0DryRi0NnlRDljkUXaC4dvlR\n"
+        b"RboB8sPYBJ6GrtlAxBxFXYnzsIE3Xqozgt9LNQELhhKJNKSz4qG4AR4fGhwblaY5\n"
+        b"ycTYXWaJXwKBgARXD5nzW/Lj/BEN2xNU+XUSP+jRsnF6dRCWzscsBftGbK5NTKRG\n"
+        b"+yubxqvm1Hb5Ru4CuwLL5+W4YPe0kTbx8s0m3mK6FIjKaVir/HfsqUiN6GKKaesc\n"
+        b"nKPOiawkIsfX6rwsKoJUUwOx0QrIcxRPznWApcKR/NhrHH9FTqJ1HpflAoGANp1B\n"
+        b"G703lmC/jWm1b+E/Kxos2KmgibOUBycqL6uBA7WLs3W4V3TzTZIB2urIQqDoUBlg\n"
+        b"Vukcm+RzKu+ojAU5LWXTAt/fOiyXH8JFvuaOw6kiwqNsTps//ZGdZuf9M1qjO/Ge\n"
+        b"jNK98EtuzFFHlESPRUvPv5I5RVg7hU4GWjh0NsMCgYAqVoB5x4+ugae+eZgSLfwG\n"
+        b"YWSOiHQhEqqLWAp3MHbuwDVNnpy1KNWh7A/f8Hd3xgPKQIGCl74dBQ+6pv08Dxyt\n"
+        b"az+aNXi/CmaEb3v6abaKdF7uNJCpKUnYJ3lpLrrd9HsLbhszIhs1iPbJK38SDEm0\n"
+        b"xgbwpLAv3YW+usS9x8LAPw==\n"
+        b"-----END PRIVATE KEY-----"
+    )
+
+    def __init__(self, sub: str = "uss_unsigned"):
+        super().__init__()
+        self.sub = sub
+
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        timestamp = int(
+            (datetime.datetime.now(datetime.UTC) - _UNIX_EPOCH).total_seconds()
+        )
+        claims = {
+            "sub": self.sub,
+            "client_id": self.sub,
+            "scope": " ".join(scopes),
+            "aud": intended_audience,
+            "nbf": timestamp - 1,
+            "exp": timestamp + NoAuth.EXPIRATION,
+            "iss": "NoAuth",
+            "jti": str(uuid.uuid4()),
+        }
+        jwt = jwcrypto.jwt.JWT(
+            header={"typ": "JWT", "alg": "RS256"},
+            claims=claims,
+            algs=["RS256"],
+        )
+        jwt.make_signed_token(InvalidTokenSignatureAuth.unknown_private_key)
+        return jwt.serialize()
+
+
+class DummyOAuth(AuthAdapter):
+    """Auth adapter that gets JWTs from the local token endpoint.
+
+    When the token endpoint requires mutual TLS (the hardened local ecosystem),
+    a client certificate is supplied via environment:
+
+      * ``AUTH_ADAPTER_CERT`` + ``AUTH_ADAPTER_KEY`` -- explicit PEM file paths, or
+      * ``AUTH_ADAPTER_CERT_DIR`` -- a directory holding ``<sub>/crt`` and
+        ``<sub>/key`` for each participant.
+
+    The CA to trust for the endpoint is taken from ``REQUESTS_CA_BUNDLE`` (honored
+    by ``requests`` automatically). The token ``sub`` is derived server-side from
+    the verified client certificate; the ``sub`` sent in the query is ignored.
+
+    ``self.client_cert`` exposes the same (cert, key) pair publicly so that
+    callers building the *API-calling* session (as opposed to this adapter's own
+    token-endpoint session) can also present it -- required for RFC 8705
+    sender-constrained tokens, where a resource server checks that the caller
+    presenting a bearer token is the same client that obtained it. See
+    ``UTMClientSession`` in infrastructure.py.
+    """
+
+    def __init__(self, token_endpoint: str, sub: str):
+        super().__init__()
+
+        self._oauth_token_endpoint = token_endpoint
+        self._sub = sub
+        self._oauth_session = requests.Session()
+        self.client_cert: tuple[str, str] | None = None
+
+        cert = os.environ.get("AUTH_ADAPTER_CERT")
+        key = os.environ.get("AUTH_ADAPTER_KEY")
+        cert_dir = os.environ.get("AUTH_ADAPTER_CERT_DIR")
+        if not (cert and key) and cert_dir:
+            cert = os.path.join(cert_dir, sub, "crt")
+            key = os.path.join(cert_dir, sub, "key")
+        if cert and key and os.path.exists(cert) and os.path.exists(key):
+            self._oauth_session.cert = (cert, key)
+            self.client_cert = (cert, key)
+
+    # Overrides method in AuthAdapter
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        url = "{}?grant_type=client_credentials&scope={}&intended_audience={}&issuer=dummy&sub={}".format(
+            self._oauth_token_endpoint,
+            urllib.parse.quote(" ".join(scopes)),
+            urllib.parse.quote(intended_audience),
+            self._sub,
+        )
+        response = self._oauth_session.get(url)
+        if response.status_code != 200:
+            raise AccessTokenError(
+                'Request to get DummyOAuth access token returned {} "{}" at {}'.format(
+                    response.status_code, response.content.decode("utf-8"), response.url
+                )
+            )
+        return response.json()["access_token"]
+
+
+class _SessionIssuer:
+    """Helper for issuing tokens using a pre-configured Google session."""
+
+    def __init__(
+        self,
+        token_endpoint: str,
+        session: google_requests.AuthorizedSession,
+    ):
+        self._oauth_token_endpoint = token_endpoint
+        self._oauth_session = session
+
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        url = "{}?grant_type=client_credentials&scope={}&intended_audience={}".format(
+            self._oauth_token_endpoint,
+            urllib.parse.quote(" ".join(scopes)),
+            urllib.parse.quote(intended_audience),
+        )
+        response = self._oauth_session.post(url)
+        if response.status_code != 200:
+            raise AccessTokenError(
+                'Request to get ServiceAccount access token returned {} "{}" at {}'.format(
+                    response.status_code, response.content.decode("utf-8"), response.url
+                )
+            )
+        return response.json()["access_token"]
+
+
+class ServiceAccount(AuthAdapter):
+    """Auth adapter that gets JWTs using a service account key file."""
+
+    def __init__(self, token_endpoint: str, service_account_json: str):
+        super().__init__()
+
+        credentials = service_account.Credentials.from_service_account_file(
+            service_account_json
+        ).with_scopes(["email"])
+        oauth_session = google_requests.AuthorizedSession(credentials)
+
+        self._session_issuer = _SessionIssuer(token_endpoint, oauth_session)
+
+    # Overrides method in AuthAdapter
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        return self._session_issuer.issue_token(intended_audience, scopes)
+
+
+class ServiceAccountImpersonation(AuthAdapter):
+    """Auth adapter that gets JWTs using the target service account.
+
+    This assumes the environment is configured with Application Default
+    Credentials (e.g. when running in Google Cloud), and that these credentials
+    have permission to impersonate the given target_service_account (namely, the
+    "Service Account Token Creator" role).
+    """
+
+    def __init__(self, token_endpoint: str, target_service_account: str):
+        super().__init__()
+
+        default_credentials, _ = google_auth.default(scopes=["email"])
+
+        target_credentials = impersonated_credentials.Credentials(
+            source_credentials=default_credentials,
+            target_principal=target_service_account,
+            target_scopes=["email"],
+        )
+        oauth_session = google_requests.AuthorizedSession(target_credentials)
+
+        self._session_issuer = _SessionIssuer(token_endpoint, oauth_session)
+
+    # Overrides method in AuthAdapter
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        return self._session_issuer.issue_token(intended_audience, scopes)
+
+
+class UsernamePassword(AuthAdapter):
+    """Auth adapter that gets JWTs using a username and password."""
+
+    def __init__(
+        self, token_endpoint: str, username: str, password: str, client_id: str
+    ):
+        super().__init__()
+
+        self._oauth_token_endpoint = token_endpoint
+        self._username = username
+        self._password = password
+        self._client_id = client_id
+
+    # Overrides method in AuthAdapter
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        scopes.append(f"aud:{intended_audience}")
+        response = requests.post(
+            self._oauth_token_endpoint,
+            data={
+                "grant_type": "password",
+                "username": self._username,
+                "password": self._password,
+                "client_id": self._client_id,
+                "scope": " ".join(scopes),
+            },
+        )
+        if response.status_code != 200:
+            raise AccessTokenError(
+                'Request to get UsernamePassword access token returned {} "{}" at {}'.format(
+                    response.status_code, response.content.decode("utf-8"), response.url
+                )
+            )
+        return response.json()["access_token"]
+
+
+def _load_keypair(
+    key_path: str, cert_url: str, backend: Any
+) -> tuple[jwcrypto.jwk.JWK, jwcrypto.jwk.JWK]:
+    # Retrieve certificate to validate match with private key
+    response = requests.get(cert_url)
+    assert response.status_code == 200
+    if cert_url[-4:].lower() == ".der":
+        cert = cryptography.x509.load_der_x509_certificate(response.content, backend)
+    elif cert_url[-4:].lower() == ".crt":
+        cert = cryptography.x509.load_pem_x509_certificate(response.content, backend)
+    else:
+        raise AccessTokenError("cert_url must end with .der or .crt")
+    cert_public_key = cert.public_key().public_bytes(
+        cryptography.hazmat.primitives.serialization.Encoding.PEM,
+        cryptography.hazmat.primitives.serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    # Generate public key directly from private key
+    with open(key_path) as f:
+        key_content = f.read().encode("utf-8")
+    if key_path[-4:].lower() == ".key" or key_path[-4:].lower() == ".pem":
+        private_key = cryptography.hazmat.primitives.serialization.load_pem_private_key(
+            key_content, password=None, backend=backend
+        )
+        private_key_bytes = key_content
+    else:
+        raise AccessTokenError("key_path must end with .key or .pem")
+    public_key = private_key.public_key().public_bytes(
+        cryptography.hazmat.primitives.serialization.Encoding.PEM,
+        cryptography.hazmat.primitives.serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    if cert_public_key != public_key:
+        raise AccessTokenError(
+            "Public key in certificate does not match private key provided"
+        )
+
+    private_jwk = jwcrypto.jwk.JWK.from_pem(private_key_bytes)
+    public_jwk = jwcrypto.jwk.JWK.from_pem(public_key)
+    return private_jwk, public_jwk
+
+
+def _make_jws(
+    token_headers: dict[str, str],
+    payload: str,
+    private_jwk: jwcrypto.jwk.JWK,
+    public_jwk: jwcrypto.jwk.JWK,
+) -> str:
+    # Create JWS
+    jws = jwcrypto.jws.JWS(payload.encode("utf-8"))
+    jws.add_signature(
+        private_jwk, "RS256", protected=jwcrypto.common.json_encode(token_headers)
+    )
+    signed = jws.serialize(compact=True)
+
+    # Check JWS
+    jws_check = jwcrypto.jws.JWS()
+    jws_check.deserialize(signed)
+    try:
+        jws_check.verify(public_jwk, "RS256")
+    except jwcrypto.jws.InvalidJWSSignature:
+        raise AccessTokenError(
+            "Could not construct a valid cryptographic signature for JWS"
+        )
+
+    return signed
+
+
+def _make_signature(
+    payload: str, private_jwk: jwcrypto.jwk.JWK, public_jwk: jwcrypto.jwk.JWK
+) -> str:
+    signer = jwcrypto.jws.JWA.signing_alg("RS256")
+    payload_bytes = payload.encode("utf-8")
+    signature = signer.sign(private_jwk, payload_bytes)
+    signer.verify(public_jwk, payload_bytes, signature)
+    return base64.b64encode(signature).decode("utf-8")
+
+
+class SignedRequest(AuthAdapter):
+    """Auth adapter that gets JWTs by signing its outgoing requests."""
+
+    def __init__(
+        self,
+        token_endpoint: str,
+        client_id: str,
+        key_path: str,
+        cert_url: str,
+        key_id: str | None = None,
+        signature_style: str = "UPP2",
+    ):
+        """Create an AuthAdapter that retrieves tokens via message signing.
+
+        Args:
+          token_endpoint: URL of the authorization server's token endpoint.
+          client_id: ID of client for which the token is being requested.
+          key_path: Path to private key with which to sign the token request.
+          cert_url: Publicly-accessible URL of certificate containing the public key
+            corresponding to the private key in key_path and signed by an authority
+            recognized by the authorization server.
+          key_id: If specified, the specific ID to supply in the JWS header.  If not
+            specified, defaults to the thumbprint of the certificate's public key.
+          signature_style: "UPP2" to use a signature in the style of UPP2, "UFT" to
+            use a signature in the style of UFT (UPP2 and UFT are FAA
+            demonstrations).
+        """
+        super().__init__()
+
+        self._token_endpoint = token_endpoint
+        self._client_id = client_id
+        self._cert_url = cert_url
+        self._backend = cryptography.hazmat.backends.default_backend()
+
+        self._signature_style = signature_style
+        if signature_style not in ("UPP2", "UFT"):
+            raise ValueError(
+                f"signature_style must be either `UPP2` or `UFT`; found `{signature_style}`"
+            )
+
+        self._private_jwk, self._public_jwk = _load_keypair(
+            key_path, cert_url, self._backend
+        )
+
+        # Assign key ID
+        if key_id:
+            self._kid = key_id
+        else:
+            self._kid = self._public_jwk.thumbprint()
+
+    # Overrides method in AuthAdapter
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        # Construct request body
+        query = {
+            "grant_type": "client_credentials",
+            "client_id": self._client_id,
+            "scope": " ".join(scopes),
+            "resource": intended_audience,
+            "current_timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+        }
+        payload = "&".join([k + "=" + v for k, v in query.items()])
+
+        # Generate signature
+        token_headers = {
+            "typ": "JOSE",
+            "alg": "RS256",
+            "x5u": self._cert_url,
+            "kid": self._kid,
+        }
+
+        # Add signature header(s) and associated information
+        request_headers: dict[str, str] = {}
+        if self._signature_style == "UPP2":
+            signature = _make_jws(
+                token_headers, payload, self._private_jwk, self._public_jwk
+            )
+            request_headers["Content-Type"] = "application/x-www-form-urlencoded"
+            request_headers["x-utm-message-signature"] = re.sub(
+                r"\.[^.]*\.", "..", signature
+            )
+        elif self._signature_style == "UFT":
+            content_digest = base64.b64encode(
+                hashlib.sha512(payload.encode("utf-8")).digest()
+            ).decode("utf-8")
+            path = urllib.parse.urlparse(self._token_endpoint).path
+            components = [
+                "@method",
+                "@path",
+                "@query",
+                "authorization",
+                "content-type",
+                "content-digest",
+                "x-utm-jws-header",
+            ]
+            signature_content = {
+                "@method": "POST",
+                "@path": path,
+                "@query": "?",
+                "authorization": "",
+                "content-type": "application/x-www-form-urlencoded",
+                "content-digest": f"sha-512=:{content_digest}:",
+                "x-utm-jws-header": ", ".join(
+                    f'{k}="{v}"' for k, v in token_headers.items()
+                ),
+                "@signature-params": "({});created={}".format(
+                    " ".join(f'"{c}"' for c in components),
+                    int(datetime.datetime.now(datetime.UTC).timestamp()),
+                ),
+            }
+            components.append("@signature-params")
+            signature_base = "\n".join(
+                f'"{c}": {signature_content[c]}' for c in components
+            )
+            signature = _make_signature(
+                signature_base, self._private_jwk, self._public_jwk
+            )
+
+            for k, v in signature_content.items():
+                if k[0] != "@":
+                    request_headers[k] = v
+            request_headers["x-utm-message-signature"] = (
+                f"utm-message-signature=:{signature}:"
+            )
+            request_headers["x-utm-message-signature-input"] = (
+                "utm-message-signature={}".format(
+                    signature_content["@signature-params"]
+                )
+            )
+        else:
+            raise ValueError("Invalid signature style")
+
+        # Make token request
+        response = requests.post(
+            self._token_endpoint, data=payload, headers=request_headers
+        )
+        if response.status_code != 200:
+            raise AccessTokenError(
+                'Request to get SignedRequest access token returned {} "{}" at {}'.format(
+                    response.status_code, response.content.decode("utf-8"), response.url
+                )
+            )
+        return response.json()["access_token"]
+
+
+class ClientIdClientSecret(AuthAdapter):
+    """Auth adapter that gets JWTs using a client ID and client secret. By default, this will send the request as JSON, you can use send_request_as_data flag to send the request as form data."""
+
+    def __init__(
+        self,
+        token_endpoint: str,
+        client_id: str,
+        client_secret: str,
+        send_request_as_data: bool = False,
+    ):
+        super().__init__()
+
+        self._oauth_token_endpoint = token_endpoint
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._send_request_as_data = send_request_as_data
+
+    # Overrides method in AuthAdapter
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self._client_id,
+            "client_secret": self._client_secret,
+            "audience": intended_audience,
+            "scope": " ".join(scopes),
+        }
+
+        if self._send_request_as_data:
+            response = requests.post(self._oauth_token_endpoint, data=payload)
+        else:
+            response = requests.post(self._oauth_token_endpoint, json=payload)
+        if response.status_code != 200:
+            raise AccessTokenError(
+                "Unable to retrieve access token:\n" + response.content.decode("utf-8")
+            )
+        return response.json()["access_token"]
+
+
+class Keycloak(ClientIdClientSecret):
+    """Auth adpater for Keycloak. Assume Keycloak is configured to add the correct audience in the token via a client scope, named as the intended audience"""
+
+    def __init__(
+        self,
+        token_endpoint: str,
+        client_id: str,
+        client_secret: str,
+    ):
+        super().__init__(token_endpoint, client_id, client_secret, True)
+
+    def issue_token(self, intended_audience: str, scopes: list[str]) -> str:
+        if intended_audience not in scopes:
+            scopes.append(intended_audience)
+
+        return super().issue_token(intended_audience, scopes)
+
+
+class FlightPassport(ClientIdClientSecret):
+    """Auth adpater for Flight Passport OAUTH server (https://www.github.com/openskies-sh/flight_passport)"""
+
+    def __init__(
+        self,
+        token_endpoint: str,
+        client_id: str,
+        client_secret: str,
+        send_request_as_data: str = "true",
+    ):
+        send_request_as_data = send_request_as_data.lower() == "true"
+
+        super().__init__(token_endpoint, client_id, client_secret, send_request_as_data)
+
+        self._send_request_as_data = send_request_as_data
+
+
+class AccessTokenError(RuntimeError):
+    def __init__(self, msg):
+        super().__init__(msg)
+
+
+def all_subclasses(cls):
+    # Reference: https://stackoverflow.com/questions/3862310/how-to-find-all-the-subclasses-of-a-class-given-its-name
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in all_subclasses(c)]
+    )
+
+
+SPEC_RE = re.compile(r"^\s*([^\s(]+)\s*\(\s*([^)]*)\s*\)\s*$")
+
+
+def make_auth_adapter(spec: AuthSpec) -> AuthAdapter:
+    """Make an AuthAdapter according to a string specification.
+
+    Args:
+      spec: Specification of adapter in the form
+        ADAPTER_NAME([VALUE1[,PARAM2=VALUE2][,...]]) where ADAPTER_NAME is the
+        name of a subclass of AuthAdapter and the contents of the parentheses are
+        *args-style and **kwargs-style values for the parameters of ADAPTER_NAME's
+        __init__, but the values (all strings) do not have any quote-like
+        delimiters.
+
+    Returns:
+      An instance of the appropriate AuthAdapter subclass according to the
+      provided spec.
+    """
+
+    m = SPEC_RE.match(spec)
+    if m is None:
+        raise ValueError(
+            "Auth adapter specification did not match the pattern `AdapterName(param, param, ...)`"
+        )
+
+    adapter_name = m.group(1)
+    adapter_classes = {cls.__name__: cls for cls in all_subclasses(AuthAdapter)}
+    if adapter_name not in adapter_classes:
+        raise ValueError(f"Auth adapter `{adapter_name}` does not exist")
+    Adapter = adapter_classes[adapter_name]
+
+    adapter_param_string = m.group(2)
+    param_strings = [s.strip() for s in adapter_param_string.split(",")]
+    args = []
+    kwargs = {}
+    for param_string in param_strings:
+        if "=" in param_string:
+            kv = param_string.split("=", 1)
+            kwargs[kv[0].strip()] = kv[1].strip()
+        else:
+            args.append(param_string)
+
+    return Adapter(*args, **kwargs)

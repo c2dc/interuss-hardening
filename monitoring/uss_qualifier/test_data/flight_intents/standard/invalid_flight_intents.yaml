@@ -1,0 +1,87 @@
+$content_schema: monitoring/uss_qualifier/resources/flight_planning/flight_intent/FlightIntentCollection.json
+intents:
+  valid_flight:
+    full:
+      basic_information:
+        usage_state: Planned
+        uas_state: Nominal
+        area:
+          - outline_polygon:
+              # There are 0.00000898331 (roughly 0.00001) degrees of latitude (and longitude, at the equator) per meter.
+              # Therefore, each value below is roughly in meters.
+              vertices:
+                - {lng:  0.00000, lat:  0.00000}
+                - {lng: -0.00030, lat:  0.00042}
+                - {lng:  0.00030, lat:  0.00042}
+            altitude_lower:
+              value: 0
+              reference: W84
+              units: M
+            altitude_upper:
+              value: 30
+              reference: W84
+              units: M
+            start_time:
+              offset_from:
+                starting_from:
+                  time_during_test: StartOfScenario
+                offset: -1s
+            duration: 45m
+
+      astm_f3548_21:
+        priority: 0
+
+      uspace_flight_authorisation:
+        $ref: ./flight_auths.yaml#/standard
+
+  valid_activated:
+    delta:
+      source: valid_flight
+      mutation:
+        basic_information:
+          usage_state: InUse
+
+  invalid_too_far_away:
+    delta:
+      source: valid_flight
+      mutation:
+        # 32 days > OiMaxPlanHorizon = 30 days
+        basic_information:
+          area:
+            - start_time:
+                offset_from:
+                  starting_from:
+                    time_during_test: StartOfScenario
+                  offset: 32d
+
+  invalid_recently_ended:
+    delta:
+      source: valid_flight
+      mutation:
+        # end_time < now - TimeSyncMaxDifferentialSeconds = 5 seconds
+        basic_information:
+          area:
+            - start_time:
+                offset_from:
+                  starting_from:
+                    time_during_test: TimeOfEvaluation
+                  offset: -1m
+              end_time:
+                offset_from:
+                  starting_from:
+                    time_during_test: TimeOfEvaluation
+                  offset: -5s
+              duration:
+
+  valid_conflict_tiny_overlap:
+    delta:
+      source: valid_flight
+      mutation:
+        basic_information:
+          area:
+            - outline_polygon:
+              # polygon overlaps with polygon of valid_flight, distance between first vertex of each is 1.112cm
+                vertices:
+                  - {lng:  0.00000, lat:  0.0000001}
+                  - {lng: -0.00030, lat: -0.00042}
+                  - {lng:  0.00030, lat: -0.00042}

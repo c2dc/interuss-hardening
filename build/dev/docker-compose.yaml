@@ -1,0 +1,366 @@
+# This Docker Compose file is intended to be used through `./run_locally.sh` to supply all required environment variables.
+
+# Bound the size of every container's stdout/stderr capture (Docker json-file
+# driver). Without this each *-json.log grows unbounded until the container is
+# removed. 10m x 3 = 30 MiB per container.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  crdb:
+    image: cockroachdb/cockroach:v24.1.3
+    logging: *default-logging
+    entrypoint: /db-entrypoint.sh
+    # Secure mode: --certs-dir enables node-to-node mutual TLS and client-cert
+    # authentication for SQL clients. The CA lives in the OpenBao vault
+    # (docker-compose.secrets.yaml); openbao-init issues the node/client certs
+    # into build/dev/dss-secrets/ which is bind-mounted at /secrets.
+    # The crdb container is attached to two networks (see below); --advertise-addr
+    # and --join use the fixed dss_internal_network IPs so inter-node traffic
+    # never crosses onto the ecosystem network. 172.27.1.129 is USS 1 node 1
+    # (128 | node_idx), which every other node joins.
+    # 128MB limits allow larger numbers of nodes on a single machine
+    # --enterprise-encryption: AES-256 store encryption at rest. The key is
+    # generated once by openbao-init.sh (build/dev/startup/openbao-init.sh) and
+    # shared cluster-wide, same as the CA above. Works fully without a
+    # CockroachDB Cloud license.
+    command: /cockroach/cockroach.sh start --certs-dir=/secrets/certs --advertise-addr=${DB_IP:?} --join=172.27.1.129 --cache=128MiB --max-sql-memory=128MiB --locality=uss=${USS_IDX:?},node=${USS_IDX:?}-${USS_NODE_IDX:?} --enterprise-encryption=path=cockroach-data,key=/secrets/crdb-encryption/aes-256.key,old-key=plain
+    volumes:
+      - $PWD/startup/db-entrypoint.sh:/db-entrypoint.sh:ro
+      - $PWD/dss-secrets:/secrets:ro
+    profiles: [crdb]
+    restart: always
+    cap_add: [NET_ADMIN]
+    hostname: db${USS_NODE_IDX:?}.uss${USS_IDX:?}.localutm
+    networks:
+      dss_internal_network:
+        ipv4_address: ${DB_IP:?}
+      # Also reachable on the ecosystem network so the containerized uss_qualifier
+      # can exercise the ASTM "direct datastore access" scenario against it.
+      interop_ecosystem_network:
+        aliases:
+          - datastore.uss${USS_IDX:?}.localutm
+    ports:
+      - "81${PADDED_NODE_IDX:?}:8080"
+      - "262${PADDED_NODE_IDX:?}:26257"
+    environment:
+      - INTRA_USS_SUBNET=172.27.${USS_IDX:?}.0/24
+      - INTER_USS_SUBNET=172.27.0.0/16
+      - INTRA_USS_NETEM_CONF=${INTRA_USS_NETEM_CONF-}
+      - INTER_USS_NETEM_CONF=${INTER_USS_NETEM_CONF-}
+    healthcheck:
+      # Secure mode serves the admin/health endpoints over HTTPS.
+      test: curl -fk 'https://localhost:8080/health?ready=1' || exit 1
+      interval: 3m
+      start_period: 30s
+      start_interval: 5s
+
+  ybdb:
+    image: interuss/yugabyte:2025.1.2.1-interuss
+    logging: *default-logging
+    entrypoint: /db-entrypoint.sh
+    # ysql_output_buffer_size needs to be increased to allow ysql to retry read restart errors. https://docs.yugabyte.com/preview/reference/configuration/yb-tserver/#ysql-output-buffer-size
+    command: sh -c "bin/yugabyted start --background=false --tserver_flags=ysql_output_buffer_size=1048576 --advertise_address=$$YBDB_HOST --join=$$([ "$$YBDB_HOST" = db1.uss1.localutm ] || echo db1.uss1.localutm)"
+    volumes:
+      - $PWD/startup/db-entrypoint.sh:/db-entrypoint.sh:ro
+    profiles: [ybdb]
+    restart: always
+    cap_add: [ NET_ADMIN ]
+    hostname: db${USS_NODE_IDX:?}.uss${USS_IDX:?}.localutm
+    networks:
+      dss_internal_network:
+        ipv4_address: ${DB_IP:?}
+    ports:
+      - "70${PADDED_NODE_IDX:?}:7000"
+      - "90${PADDED_NODE_IDX:?}:9000"
+      - "154${PADDED_NODE_IDX:?}:15433"
+      - "54${PADDED_NODE_IDX:?}:5433"
+      - "91${PADDED_NODE_IDX:?}:9042"
+    environment:
+      - YBDB_HOST=db${USS_NODE_IDX:?}.uss${USS_IDX:?}.localutm
+      - INTRA_USS_SUBNET=172.27.${USS_IDX:?}.0/24
+      - INTER_USS_SUBNET=172.27.0.0/16
+      - INTRA_USS_NETEM_CONF=${INTRA_USS_NETEM_CONF-}
+      - INTER_USS_NETEM_CONF=${INTER_USS_NETEM_CONF-}
+    healthcheck:
+      test: /home/yugabyte/postgres/bin/pg_isready -h $$YBDB_HOST || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  crdb-init:
+    image: cockroachdb/cockroach:v24.1.3
+    logging: *default-logging
+    profiles: [bootstrap-crdb]
+    depends_on: [crdb]
+    # Sets the CRDB replication factor for all ranges. NUM_REPLICAS is derived in
+    # run_locally.sh, NOT simply NUM_USS: CockroachDB rejects num_replicas=2, and
+    # with fewer than 3 stores it will not up-replicate past a fragile quorum, so
+    # topologies below 3 nodes are explicitly single-replica. Only with
+    # NUM_USS>=3 does CRDB spread replicas over the --locality zones and give
+    # each USS a replica.
+    # This previously read `num_replicas = ${NUM_USS}` and swallowed the ALTER's
+    # failure via an unconditional `exit 0`, so the zone config silently never
+    # applied and every range sat on a single node.
+    # On a real production deployment such a configuration would be made to meet the survivability objectives (https://interuss.github.io/dss/latest/operations/survivability-crdb).
+    volumes:
+      - $PWD/dss-secrets:/secrets:ro
+    entrypoint: >
+      sh -c "
+        out=$$(/cockroach/cockroach.sh init --certs-dir=/secrets/certs --host=db1.uss1.localutm 2>&1);
+        rc=$$?;
+        echo \"$$out\";
+        if [ $$rc -ne 0 ] && ! echo \"$$out\" | grep -q \"already been initialized\"; then
+          exit 1;
+        fi;
+        /cockroach/cockroach.sh sql --certs-dir=/secrets/certs --host=db1.uss1.localutm -e 'ALTER RANGE default CONFIGURE ZONE USING num_replicas = ${NUM_REPLICAS:?};' || exit 1;
+        exit 0;
+      "
+    networks: [dss_internal_network]
+
+  rid_bootstrapper:
+    image: ${DSS_IMAGE:?}
+    logging: *default-logging
+    profiles: [bootstrap-crdb]
+    volumes:
+      - $PWD/dss-secrets:/secrets:ro
+    entrypoint: sh -c "/usr/bin/db-manager migrate --schemas_dir=/db-schemas/rid --db_version latest --cockroach_host db1.uss1.localutm --cockroach_ssl_mode verify-full --cockroach_ssl_dir /secrets/certs --cockroach_user root"
+    depends_on:
+      crdb-init:
+        condition: service_completed_successfully
+    networks: [dss_internal_network]
+    healthcheck:
+      disable: true
+
+  scd_bootstrapper:
+    image: ${DSS_IMAGE:?}
+    logging: *default-logging
+    profiles: [bootstrap-crdb]
+    volumes:
+      - $PWD/dss-secrets:/secrets:ro
+    entrypoint: sh -c "/usr/bin/db-manager migrate --schemas_dir=/db-schemas/scd --db_version latest --cockroach_host db1.uss1.localutm --cockroach_ssl_mode verify-full --cockroach_ssl_dir /secrets/certs --cockroach_user root"
+    depends_on:
+      crdb-init:
+        condition: service_completed_successfully
+    networks: [dss_internal_network]
+    healthcheck:
+      disable: true
+
+  aux_bootstrapper:
+    image: ${DSS_IMAGE:?}
+    logging: *default-logging
+    profiles: [bootstrap-crdb]
+    volumes:
+      - $PWD/dss-secrets:/secrets:ro
+    entrypoint: sh -c "/usr/bin/db-manager migrate --schemas_dir=/db-schemas/aux_ --db_version latest --cockroach_host db1.uss1.localutm --cockroach_ssl_mode verify-full --cockroach_ssl_dir /secrets/certs --cockroach_user root"
+    depends_on:
+      crdb-init:
+        condition: service_completed_successfully
+    networks: [dss_internal_network]
+    healthcheck:
+      disable: true
+
+  rid_bootstrapper-ybdb:
+    image: ${DSS_IMAGE:?}
+    logging: *default-logging
+    profiles: [bootstrap-ybdb]
+    entrypoint: sh -c "/usr/bin/db-manager migrate --schemas_dir=/db-schemas/yugabyte/rid --db_version latest --datastore_host db1.uss1.localutm --datastore_user yugabyte --datastore_port 5433"
+    restart: on-failure
+    networks: [dss_internal_network]
+    healthcheck:
+      disable: true
+
+  scd_bootstrapper-ybdb:
+    image: ${DSS_IMAGE:?}
+    logging: *default-logging
+    profiles: [bootstrap-ybdb]
+    entrypoint: sh -c "/usr/bin/db-manager migrate --schemas_dir=/db-schemas/yugabyte/scd --db_version latest --datastore_host db1.uss1.localutm --datastore_user yugabyte --datastore_port 5433"
+    restart: on-failure
+    networks: [dss_internal_network]
+    healthcheck:
+      disable: true
+
+  aux_bootstrapper-ybdb:
+    image: ${DSS_IMAGE:?}
+    logging: *default-logging
+    profiles: [bootstrap-ybdb]
+    entrypoint: sh -c "/usr/bin/db-manager migrate --schemas_dir=/db-schemas/yugabyte/aux_ --db_version latest --datastore_host db1.uss1.localutm --datastore_user yugabyte --datastore_port 5433"
+    restart: on-failure
+    networks: [dss_internal_network]
+    healthcheck:
+      disable: true
+
+  dss:
+    image: ${DSS_IMAGE:?}
+    logging: *default-logging
+    command: /startup/core_service.sh ${DEBUG_ON:-0}
+    profiles: [ crdb, ybdb, raft ]
+    restart: always
+    cap_add: [ NET_ADMIN ]
+    volumes:
+      # CockroachDB client certs (/secrets/certs) and the OAuth public key
+      # (/secrets/auth2/auth2.pem), provisioned by the OpenBao vault.
+      - $PWD/dss-secrets:/secrets:ro
+      - $PWD/startup/core_service.sh:/startup/core_service.sh:ro
+    depends_on:
+      rid_bootstrapper:
+        condition: service_completed_successfully
+        required: false
+      scd_bootstrapper:
+        condition: service_completed_successfully
+        required: false
+      aux_bootstrapper:
+        condition: service_completed_successfully
+        required: false
+      rid_bootstrapper-ybdb:
+        condition: service_completed_successfully
+        required: false
+      scd_bootstrapper-ybdb:
+        condition: service_completed_successfully
+        required: false
+      aux_bootstrapper-ybdb:
+        condition: service_completed_successfully
+        required: false
+    hostname: dss${USS_NODE_IDX:?}.uss${USS_IDX:?}.localutm
+    networks:
+      dss_internal_network:
+          ipv4_address: ${DSS_IP:?}
+      interop_ecosystem_network:
+    ports:
+      - "40${PADDED_NODE_IDX:?}:4000"
+      - "80${PADDED_NODE_IDX:?}:80"
+      - "84${PADDED_NODE_IDX:?}:443"
+      - "95${PADDED_NODE_IDX:?}:95${PADDED_NODE_IDX:?}"
+      - "96${PADDED_NODE_IDX:?}:96${PADDED_NODE_IDX:?}"
+      - "97${PADDED_NODE_IDX:?}:97${PADDED_NODE_IDX:?}"
+    environment:
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES}
+      JWT_AUDIENCES: dss${USS_NODE_IDX:?}.uss${USS_IDX:?}.localutm
+      USS_IDX: ${USS_IDX:?}
+      USS_NODE_IDX: ${USS_NODE_IDX:?}
+      # Trust the vault CA when core-service fetches the JWKS over HTTPS.
+      SSL_CERT_FILE: /secrets/certs/ca.crt
+      DATASTORE_HOST: db${USS_NODE_IDX:?}.uss${USS_IDX:?}.localutm
+      INTRA_USS_SUBNET: 172.27.${USS_IDX:?}.0/24
+      INTER_USS_SUBNET: 172.27.0.0/16
+      INTRA_USS_NETEM_CONF: ${INTRA_USS_NETEM_CONF-}
+      INTER_USS_NETEM_CONF: ${INTER_USS_NETEM_CONF-}
+      CORE_SERVICE_EXTRA_FLAGS: ${CORE_SERVICE_EXTRA_FLAGS-}
+      RAFT_ID: ${RAFT_ID:-1}
+      AUX_RAFT_NODES: ${AUX_RAFT_NODES-}
+      RID_RAFT_NODES: ${RID_RAFT_NODES-}
+      SCD_RAFT_NODES: ${SCD_RAFT_NODES-}
+    healthcheck:
+      test: wget -O - 'http://127.0.0.1/healthy' || exit 1
+      start_period: 120s # yugabyte may be slow to be ready, and the dss service needs the ybdb service live in order to be healthy
+      start_interval: 5s
+
+  # mTLS-terminating front for the token endpoint. Requires a client cert issued
+  # by the OpenBao PKI to reach /token; serves the public JWKS unauthenticated.
+  oauth:
+    image: nginx:1.27-alpine
+    logging: *default-logging
+    # Auth is ecosystem-critical: if this front dies, nothing else can reach the
+    # signer, so revive it automatically.
+    restart: always
+    # Render the config template at start, substituting the front<->signer shared
+    # secret (X-Proxy-Auth) from the vault-provisioned file, then run nginx. The
+    # secret is hex, so the '|' sed delimiter is safe.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'sed "s|__PROXY_SECRET__|$$(cat /secrets/oauth/proxy_secret)|g" /etc/nginx/templates/oauth.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g "daemon off;"'
+    volumes:
+      - $PWD/startup/oauth-nginx.conf:/etc/nginx/templates/oauth.conf.template:ro
+      - $PWD/dss-secrets:/secrets:ro
+    profiles: [oauth]
+    hostname: oauth.authority.localutm
+    # On the ecosystem network for client-facing :8443, and on the internal
+    # oauth_backend_network which is the ONLY path to oauth-signer.
+    networks:
+      - interop_ecosystem_network
+      - oauth_backend_network
+    ports:
+      - "8085:8443"
+    depends_on:
+      oauth-signer:
+        condition: service_started
+    healthcheck:
+      test: wget --no-check-certificate -q -O - 'https://127.0.0.1:8443/.well-known/jwks.json' || exit 1
+      interval: 3m
+      start_period: 20s
+      start_interval: 5s
+
+  # Signs the short-lived JWTs. Identity (sub) comes from the verified client cert
+  # forwarded by the oauth nginx; the signing key is generated per `up` in the vault.
+  oauth-signer:
+    image: interuss/monitoring
+    # Built locally by `make image`; never pulled. A missing image must fail loudly
+    # rather than silently run the unpinned upstream image from Docker Hub.
+    pull_policy: never
+    logging: *default-logging
+    # Auth is ecosystem-critical: revive automatically if it exits.
+    restart: always
+    command: python /startup/oauth_signer.py
+    volumes:
+      - $PWD/startup/oauth_signer.py:/startup/oauth_signer.py:ro
+      - $PWD/dss-secrets:/secrets:ro
+    profiles: [oauth]
+    hostname: oauth-signer
+    environment:
+      OAUTH_BIND: 0.0.0.0:8081
+      # Stamped into every token's `iss`, and the value /verify-cnf
+      # requires on every DSS request. Both live in this one process, so they
+      # cannot drift apart. Overridable via `export OAUTH_ISSUER=...`; note that
+      # mock_uss does not check `iss` at all, so changing it affects the DSS only.
+      OAUTH_ISSUER: ${OAUTH_ISSUER:-oauth.authority.localutm}
+    # Internal-only: reachable ONLY from the oauth front (and, via the front's
+    # relay, the DSS RFC 8705 check). NOT on the ecosystem network — that direct
+    # reachability let any peer forge the X-SSL-Client-* headers and mint tokens
+    # with no client cert.
+    networks:
+      - oauth_backend_network
+    healthcheck:
+      test: curl -fsS http://127.0.0.1:8081/.well-known/jwks.json || exit 1
+      interval: 3m
+      start_period: 15s
+      start_interval: 3s
+
+  dss_loadbalancer:
+    image: haproxy:2.9-alpine
+    logging: *default-logging
+    profiles: [lb]
+    restart: always
+    entrypoint: /startup/lb-entrypoint.sh
+    hostname: dss.lb.localutm
+    volumes:
+      - $PWD/startup/lb-entrypoint.sh:/startup/lb-entrypoint.sh:ro
+    networks:
+      - interop_ecosystem_network
+    # TLS passthrough (mode tcp) on 443: the client's mutual-TLS handshake — and
+    # the client certificate RFC 8705 binds the token to — reaches the DSS
+    # untouched. Terminating TLS here would strip the client cert and every
+    # authenticated call through the LB would 403.
+    ports:
+      - "8090:443"
+    environment:
+      NUM_USS: ${NUM_USS:-1}
+      NUM_NODES: ${NUM_NODES:-1}
+
+networks:
+  dss_internal_network:
+    name: dss_internal_network
+    external: true
+  interop_ecosystem_network:
+    name: interop_ecosystem_network
+    external: true
+  # Project-local, internal (no external routing): isolates oauth-signer so only
+  # the oauth front can reach it.
+  oauth_backend_network:
+    internal: true
+
+volumes:
+  dss_component_coordination:

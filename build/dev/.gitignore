@@ -1,0 +1,8 @@
+# Secret material provisioned by the OpenBao vault (docker-compose.secrets.yaml)
+# on `run_locally.sh up`, removed on `down`. Never committed.
+/dss-secrets/
+
+# Legacy paths from the pre-vault cert generator; ignored so stale copies from an
+# older checkout are never committed.
+/dss-certs/
+/.dss-ca/

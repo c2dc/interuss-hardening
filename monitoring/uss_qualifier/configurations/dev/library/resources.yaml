@@ -1,0 +1,551 @@
+# ===== NetRID =====
+
+netrid_observation_evaluation_configuration:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.EvaluationConfigurationResource
+  specification: { }
+
+utm_client_identity:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.communications.ClientIdentityResource
+  dependencies:
+    auth_adapter: utm_auth
+  specification:
+    whoami_audience: localhost
+    whoami_scope: rid.display_provider
+
+id_generator:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.interuss.IDGeneratorResource
+  dependencies:
+    client_identity: utm_client_identity
+  specification: { }
+
+kentland_service_area_volume:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: 37.1853
+            lng: -80.6140
+          - lat: 37.2148
+            lng: -80.6140
+          - lat: 37.2148
+            lng: -80.5440
+          - lat: 37.1853
+            lng: -80.5440
+      altitude_lower:
+        value: 0
+        reference: W84
+        units: M
+      altitude_upper:
+        value: 3048
+        reference: W84
+        units: M
+      start_time:
+        offset_from:
+          starting_from:
+            time_during_test: TimeOfEvaluation
+          offset: 1s
+      end_time:
+        offset_from:
+          starting_from:
+            time_during_test: TimeOfEvaluation
+          offset: 1h0m1s
+
+kentland_service_area:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.ServiceAreaResource
+  dependencies:
+    volume: kentland_service_area_volume
+  specification:
+    base_url: https://testdummy.interuss.org/interuss/monitoring/uss_qualifier/configurations/dev/library/resources/kentland_service_area
+
+kentland_planning_area_volume:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: 37.1853
+            lng: -80.6140
+          - lat: 37.2148
+            lng: -80.6140
+          - lat: 37.2148
+            lng: -80.5440
+          - lat: 37.1853
+            lng: -80.5440
+      altitude_lower:
+        value: 0
+        reference: W84
+        units: M
+      altitude_upper:
+        value: 3048
+        reference: W84
+        units: M
+
+kentland_planning_area:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.PlanningAreaResource
+  dependencies:
+    volume: kentland_planning_area_volume
+  specification:
+    base_url: https://testdummy.interuss.org/interuss/monitoring/uss_qualifier/configurations/dev/library/resources/kentland_planning_area
+
+au_problematically_big_area: # A huge (as in "too big") area for checks around area sizes
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: -23
+            lng: 130
+          - lat: -24
+            lng: 130
+          - lat: -24
+            lng: 132
+          - lat: -23
+            lng: 132
+
+kentland_problematically_big_area:
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: 38
+            lng: -81
+          - lat: 37
+            lng: -81
+          - lat: 37
+            lng: -80
+          - lat: 38
+            lng: -80
+
+zurich_service_area_volume:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: 47.45237618874023
+            lng: 8.337401667996478
+          - lat: 47.38882810764797
+            lng: 8.343217430398902
+          - lat: 47.3643466256706
+            lng: 8.389932768382156
+          - lat: 47.36323038495268
+            lng: 8.536070011827881
+          - lat: 47.36909451406398
+            lng: 8.580678976356925
+          - lat: 47.4007874493574
+            lng: 8.57764881798931
+          - lat: 47.451319730511365
+            lng: 8.46442103543102
+      altitude_lower:
+        value: 0
+        reference: W84
+        units: M
+      altitude_upper:
+        value: 1000
+        reference: W84
+        units: M
+      start_time:
+        offset_from:
+          starting_from:
+            time_during_test: TimeOfEvaluation
+          offset: 1s
+      end_time:
+        offset_from:
+          starting_from:
+            time_during_test: TimeOfEvaluation
+          offset: 1h0m1s
+
+zurich_service_area:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.ServiceAreaResource
+  dependencies:
+    volume: zurich_service_area_volume
+  specification:
+    base_url: https://testdummy.interuss.org/interuss/monitoring/uss_qualifier/configurations/dev/library/resources/zurich_service_area
+
+zurich_planning_area_volume:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: 47.45237618874023
+            lng: 8.337401667996478
+          - lat: 47.38882810764797
+            lng: 8.343217430398902
+          - lat: 47.3643466256706
+            lng: 8.389932768382156
+          - lat: 47.36323038495268
+            lng: 8.536070011827881
+          - lat: 47.36909451406398
+            lng: 8.580678976356925
+          - lat: 47.4007874493574
+            lng: 8.57764881798931
+          - lat: 47.451319730511365
+            lng: 8.46442103543102
+      altitude_lower:
+        value: 0
+        reference: W84
+        units: M
+      altitude_upper:
+        value: 1000
+        reference: W84
+        units: M
+
+zurich_planning_area:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.PlanningAreaResource
+  dependencies:
+    volume: zurich_planning_area_volume
+  specification:
+    base_url: https://testdummy.interuss.org/interuss/monitoring/uss_qualifier/configurations/dev/library/resources/zurich_planning_area
+
+zurich_problematically_big_area: # A huge (as in "too big") area for checks around area sizes
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: 48
+            lng: 9
+          - lat: 47
+            lng: 9
+          - lat: 47
+            lng: 8
+          - lat: 48
+            lng: 8
+
+# ===== NetRID flights data =====
+
+che_adjacent_circular_flights_data:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.FlightDataResource
+  specification:
+    adjacent_circular_flights_simulation_source: { }
+
+dc_flights_data:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.FlightDataResource
+  specification:
+    kml_source:
+      kml_file:
+        path: file://./test_data/usa/netrid/dcdemo.kml
+
+kentland_flights_data:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.FlightDataResource
+  specification:
+    kml_source:
+      kml_file:
+        path: file://./test_data/usa/kentland/rid.kml
+    flight_start_delay: 5s
+
+zurich_flights_data:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.FlightDataResource
+  specification:
+    kml_source:
+      kml_file:
+        path: file://./test_data/che/rid/zurich.kml
+    flight_start_delay: 5s
+
+# ===== NetRID data generation/simulation/storage =====
+
+adjacent_circular_storage_config:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.FlightDataStorageResource
+  specification:
+    flight_record_collection_path: "./output/generate_rid_test_data/flight_data/test_data.che.netrid.circular_flights.json"
+
+kml_storage_config:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.netrid.FlightDataStorageResource
+  specification:
+    flight_record_collection_path: "./output/generate_rid_test_data/flight_data/test_data.usa.netrid.dcdemo_flights.json"
+
+# ===== Flight planning intents =====
+che_planning_area_volume:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: 45.1853
+            lng: 7.6140
+          - lat: 45.1853
+            lng: 7.5440
+          - lat: 45.2148
+            lng: 7.5440
+          - lat: 45.2148
+            lng: 7.6140
+      altitude_lower:
+        value: 0
+        reference: W84
+        units: M
+      altitude_upper:
+        value: 3048
+        reference: W84
+        units: M
+
+che_planning_area:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.PlanningAreaResource
+  dependencies:
+    volume: che_planning_area_volume
+  specification:
+    base_url: https://testdummy.interuss.org/interuss/monitoring/uss_qualifier/configurations/dev/library/resources/che_planning_area
+
+che_problematically_big_area:
+  resource_type: resources.VolumeResource
+  specification:
+    template:
+      outline_polygon:
+        vertices:
+          - lat: 45
+            lng: 7
+          - lat: 45
+            lng: 8
+          - lat: 46
+            lng: 8
+          - lat: 46
+            lng: 7
+
+che_invalid_flight_auth_flights:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.flight_planning.FlightIntentsResource
+  specification:
+    intent_collection:
+      # Note that $refs are relative to the file with the $ref (this one, in this case)
+      $ref: file://../../../test_data/che/flight_intents/invalid_flight_auths.yaml
+
+che_conflicting_flights:
+  # Includes flight intents for both equal-priority-not-permitted and higher-priority
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.flight_planning.FlightIntentsResource
+  specification:
+    file:
+      path: file://./test_data/flight_intents/standard/conflicting_flights.yaml
+      # Note that this hash_sha512 field can be safely deleted if the content changes
+      hash_sha512: 4e31fc0aca63285f72a1f91b9603ffe28c3d0bb63c2754855336bcf382d4c49ac53a9696318b64bdca308543735c76a598a6d09b14ed59f4c09872c3428e0d80
+    transformations:
+      - relative_translation:
+          degrees_north: 46.9748
+          degrees_east: 7.4774
+          meters_up: 605
+
+che_invalid_flight_intents:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.flight_planning.FlightIntentsResource
+  specification:
+    intent_collection:
+      # Note that $refs may use package-based paths
+      $ref: test_data.flight_intents.standard.invalid_flight_intents
+    transformations:
+      - relative_translation:
+          degrees_north: 46.9748
+          degrees_east: 7.4774
+          meters_up: 605
+
+che_general_flight_auth_flights:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.flight_planning.FlightIntentsResource
+  specification:
+    file:
+      # Note that ExternalFile local file paths are relative to the uss_qualifier folder
+      path: file://./test_data/che/flight_intents/general_flight_auth_flights.yaml
+
+che_non_conflicting_flights:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.flight_planning.FlightIntentsResource
+  specification:
+    file:
+      # Note that ExternalFile paths may be package-based
+      path: test_data.flight_intents.standard.non_conflicting
+    transformations:
+      - relative_translation:
+          degrees_north: 46.9748
+          degrees_east: 7.4774
+          meters_up: 605
+
+# ===== General flight authorization =====
+
+example_flight_check_table:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.interuss.flight_authorization.FlightCheckTableResource
+  specification:
+    table:
+      rows:
+        - flight_check_id: TEST_001
+          requirement_ids:
+            - REQ_002
+            - REQ_007
+          description: The first test step defined by the test designer
+          acceptance_expectation: MustBeAccepted
+          flight_intent: flight1
+          execution_style: IfAllowed
+        - flight_check_id: TEST_002
+          requirement_ids:
+            - REQ_001
+            - REQ_003
+            - REQ_004
+          description: The second test step defined by the test designer
+          acceptance_expectation: MustBeAccepted
+          flight_intent: flight2
+          execution_style: IfAllowed
+
+# ===== Geospatial feature comprehension =====
+
+example_feature_check_table:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.interuss.geospatial_map.FeatureCheckTableResource
+  specification:
+    table:
+      rows:
+        - geospatial_check_id: TEST_001
+          requirement_ids:
+            - REQ_002
+            - REQ_007
+          description: The first test step defined by the test designer
+          operation_rule_set: Rules1
+          restriction_source: ThisRegulator
+          volumes:
+            - outline_circle:
+                center:
+                  lng: 7.4774
+                  lat: 46.9749
+                radius:
+                  value: 100
+                  units: M
+              altitude_lower:
+                value: 0
+                units: M
+                reference: SFC
+              altitude_upper:
+                value: 100
+                units: M
+                reference: SFC
+              start_time:
+                time_during_test: StartOfTestRun
+              end_time:
+                offset_from:
+                  starting_from:
+                    next_day:
+                      time_zone: Europe/Zurich
+                      starting_from:
+                        time_during_test: StartOfTestRun
+                      days_of_the_week: [ "Mo", "Fr" ]
+                  offset: 12h
+          expected_result: Block
+        - geospatial_check_id: TEST_002
+          requirement_ids:
+            - REQ_001
+            - REQ_003
+            - REQ_004
+          description: The second test step defined by the test designer
+          operation_rule_set: Rules1
+          restriction_source: ThisRegulator
+          volumes:
+            - outline_circle:
+                center:
+                  lng: 7.4774
+                  lat: 46.9749
+                radius:
+                  value: 100
+                  units: M
+              altitude_lower:
+                value: 50
+                units: M
+                reference: SFC
+              altitude_upper:
+                value: 5000
+                units: FT
+                reference: W84
+              start_time:
+                next_day:
+                  time_zone: Europe/Zurich
+                  starting_from:
+                    offset_from:
+                      starting_from:
+                        time_during_test: StartOfTestRun
+                      offset: 12h
+                use_timezone: +01:00
+              duration: 5m
+          expected_result: Advise
+        - geospatial_check_id: TEST_003
+          requirement_ids:
+            - REQ_001
+            - REQ_003
+            - REQ_004
+          description: The third test step defined by the test designer
+          operation_rule_set: Rules1
+          restriction_source: ThisRegulator
+          volumes:
+            - outline_circle:
+                center:
+                  lng: 7.4774
+                  lat: 46.9749
+                radius:
+                  value: 100
+                  units: M
+              altitude_upper:
+                value: 400
+                units: FT
+                reference: SFC
+              end_time:
+                next_sun_position:
+                  elevation_deg: -0.833  # Sunset
+                  observed_from:
+                    lng: 7.4774
+                    lat: 46.9749
+                  starting_from:
+                    offset_from:
+                      starting_from:
+                        next_day:
+                          time_zone: Europe/Zurich
+                          starting_from:
+                            time_during_test: StartOfTestRun
+                      offset: 12h
+              duration: 5m
+          expected_result: Advise
+
+generated_feature_check_table:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.interuss.geospatial_map.FeatureCheckTableResource
+  specification:
+    generate_at_runtime:
+      dict_resources:
+        geojson_example:
+          path: test_data.aus.incidents
+      jsonnet_script:
+        path: test_data.aus.incident_translator
+
+# ===== mock_uss behavioral control =====
+
+locality_che:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.interuss.mock_uss.locality.LocalityResource
+  specification:
+    locality_code: CHE
+
+# ===== Test Exclusions =====
+
+test_exclusions:
+  $content_schema: monitoring/uss_qualifier/resources/definitions/ResourceDeclaration.json
+  resource_type: resources.dev.TestExclusionsResource
+  specification:
+    allow_private_addresses: true
+    allow_cleartext_queries: true
